@@ -34,7 +34,8 @@ import {
   Trash2,
   Search,
   Users,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Upload
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -407,6 +408,66 @@ export default function App() {
     }
   };
 
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (ev.target?.result) {
+          const dataUrl = ev.target.result as string;
+          if (activeMission) {
+            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'photo', data: dataUrl } }));
+            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
+            setActiveMission(null);
+          } else {
+            setCapturedPhoto(dataUrl);
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (ev.target?.result) {
+          const dataUrl = ev.target.result as string;
+          if (activeMission) {
+            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'video', data: dataUrl } }));
+            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
+            setActiveMission(null);
+          } else {
+            setCapturedVideo(dataUrl);
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (ev.target?.result) {
+          const dataUrl = ev.target.result as string;
+          if (activeMission) {
+            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'audio', data: dataUrl } }));
+            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
+            setActiveMission(null);
+          } else {
+            setCapturedAudio(dataUrl);
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const generateNineGridImage = async () => {
     if (!currentTheme) return null;
     const canvas = document.createElement('canvas');
@@ -635,7 +696,7 @@ export default function App() {
         {activeTab === 'explore' && (
           <>
             {/* Controls */}
-            <div className="w-full bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="w-full bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 mb-4 flex flex-col md:flex-row items-center justify-between gap-4 relative z-50">
               <div className="flex items-center gap-4 w-full md:w-auto">
                 <div className="flex items-center bg-brand-100 p-1 rounded-full">
                   <button 
@@ -947,50 +1008,73 @@ export default function App() {
                   </div>
 
                   <div className="mt-8 flex flex-col gap-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      <button 
-                        onClick={() => {
-                          if (capturedPhoto) setCapturedPhoto(null);
-                          else startCamera();
-                        }}
-                        className="flex items-center justify-center gap-2 py-2.5 bg-brand-900 text-white rounded-2xl hover:bg-brand-900/90 transition-all"
-                      >
-                        <Camera className="w-4 h-4" />
-                        <span className="text-xs font-medium">{capturedPhoto ? '重拍照片' : '随手拍'}</span>
-                      </button>
-                      <button 
-                        onClick={() => {
-                          if (capturedVideo) setCapturedVideo(null);
-                          else if (isRecordingVideo) stopVideoRecording();
-                          else startVideoRecording();
-                        }}
-                        className={`flex items-center justify-center gap-2 py-2.5 rounded-2xl transition-all ${isRecordingVideo ? 'bg-red-500 text-white' : 'bg-brand-900 text-white'}`}
-                      >
-                        {isRecordingVideo ? <StopCircle className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-                        <span className="text-xs font-medium">
-                          {capturedVideo ? '重录视频' : (isRecordingVideo ? '停止录制' : '录像')}
-                        </span>
-                      </button>
-                      <button 
-                        onClick={() => {
-                          if (capturedAudio) setCapturedAudio(null);
-                          else if (isRecordingAudio) stopAudioRecording();
-                          else startAudioRecording();
-                        }}
-                        className={`flex items-center justify-center gap-2 py-2.5 rounded-2xl transition-all ${isRecordingAudio ? 'bg-red-500 text-white' : 'bg-brand-900 text-white'}`}
-                      >
-                        {isRecordingAudio ? <StopCircle className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                        <span className="text-xs font-medium">
-                          {capturedAudio ? '重录音频' : (isRecordingAudio ? '停止录音' : '录音')}
-                        </span>
-                      </button>
-                      <button 
-                        onClick={() => setIsTracking(!isTracking)}
-                        className={`flex items-center justify-center gap-2 py-2.5 border rounded-2xl transition-all ${isTracking ? 'bg-brand-500 text-white border-brand-500' : 'bg-white border-brand-200 text-brand-900'}`}
-                      >
-                        <Navigation className="w-4 h-4" />
-                        <span className="text-xs font-medium">{isTracking ? '停止追踪' : '开启地图'}</span>
-                      </button>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={() => {
+                            if (capturedPhoto) setCapturedPhoto(null);
+                            else startCamera();
+                          }}
+                          className="flex items-center justify-center gap-2 py-2.5 bg-brand-900 text-white rounded-2xl hover:bg-brand-900/90 transition-all"
+                        >
+                          <Camera className="w-4 h-4" />
+                          <span className="text-xs font-medium">{capturedPhoto ? '重拍照片' : '随手拍'}</span>
+                        </button>
+                        <label className="flex items-center justify-center gap-2 py-2.5 bg-brand-100 text-brand-900 rounded-2xl hover:bg-brand-200 transition-all cursor-pointer">
+                          <Upload className="w-4 h-4" />
+                          <span className="text-xs font-medium">上传照片</span>
+                          <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+                        </label>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={() => {
+                            if (capturedVideo) setCapturedVideo(null);
+                            else if (isRecordingVideo) stopVideoRecording();
+                            else startVideoRecording();
+                          }}
+                          className={`flex items-center justify-center gap-2 py-2.5 rounded-2xl transition-all ${isRecordingVideo ? 'bg-red-500 text-white' : 'bg-brand-900 text-white'}`}
+                        >
+                          {isRecordingVideo ? <StopCircle className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                          <span className="text-xs font-medium">
+                            {capturedVideo ? '重录视频' : (isRecordingVideo ? '停止录制' : '录像')}
+                          </span>
+                        </button>
+                        <label className="flex items-center justify-center gap-2 py-2.5 bg-brand-100 text-brand-900 rounded-2xl hover:bg-brand-200 transition-all cursor-pointer">
+                          <Upload className="w-4 h-4" />
+                          <span className="text-xs font-medium">上传视频</span>
+                          <input type="file" accept="video/*" className="hidden" onChange={handleVideoUpload} />
+                        </label>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={() => {
+                            if (capturedAudio) setCapturedAudio(null);
+                            else if (isRecordingAudio) stopAudioRecording();
+                            else startAudioRecording();
+                          }}
+                          className={`flex items-center justify-center gap-2 py-2.5 rounded-2xl transition-all ${isRecordingAudio ? 'bg-red-500 text-white' : 'bg-brand-900 text-white'}`}
+                        >
+                          {isRecordingAudio ? <StopCircle className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                          <span className="text-xs font-medium">
+                            {capturedAudio ? '重录音频' : (isRecordingAudio ? '停止录音' : '录音')}
+                          </span>
+                        </button>
+                        <label className="flex items-center justify-center gap-2 py-2.5 bg-brand-100 text-brand-900 rounded-2xl hover:bg-brand-200 transition-all cursor-pointer">
+                          <Upload className="w-4 h-4" />
+                          <span className="text-xs font-medium">上传录音</span>
+                          <input type="file" accept="audio/*" className="hidden" onChange={handleAudioUpload} />
+                        </label>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={() => setIsTracking(!isTracking)}
+                          className={`flex items-center justify-center gap-2 py-2.5 border rounded-2xl transition-all h-full ${isTracking ? 'bg-brand-500 text-white border-brand-500' : 'bg-white border-brand-200 text-brand-900'}`}
+                        >
+                          <Navigation className="w-4 h-4" />
+                          <span className="text-xs font-medium">{isTracking ? '停止追踪' : '开启地图'}</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="relative">
