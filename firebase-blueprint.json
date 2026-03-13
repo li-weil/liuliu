@@ -44,6 +44,8 @@
         "audioUrl": { "type": "string" },
         "noteText": { "type": "string" },
         "recordUnit": { "type": "string", "enum": ["location", "event", "image"] },
+        "isPublic": { "type": "boolean" },
+        "locationName": { "type": "string" },
         "path": {
           "type": "array",
           "items": {
@@ -57,7 +59,14 @@
         },
         "completedMissions": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "object",
+            "properties": {
+              "mission": { "type": "string" },
+              "mediaUrl": { "type": "string" },
+              "mediaType": { "type": "string" }
+            }
+          }
         },
         "timestamp": { "type": "string", "format": "date-time" }
       },

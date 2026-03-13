@@ -39,13 +39,13 @@ service cloud.firestore {
 
     // Walks
     match /walks/{walkId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.isPublic == true || isAdmin());
       allow create: if isAuthenticated() && 
         request.resource.data.userId == request.auth.uid &&
-        hasOnlyAllowedFields(['userId', 'themeTitle', 'photoUrl', 'videoUrl', 'audioUrl', 'noteText', 'recordUnit', 'path', 'completedMissions', 'timestamp']);
+        hasOnlyAllowedFields(['userId', 'themeTitle', 'photoUrl', 'videoUrl', 'audioUrl', 'noteText', 'recordUnit', 'path', 'completedMissions', 'timestamp', 'isPublic', 'locationName']);
       allow update: if isAuthenticated() && 
         resource.data.userId == request.auth.uid &&
-        hasOnlyAllowedFields(['userId', 'themeTitle', 'photoUrl', 'videoUrl', 'audioUrl', 'noteText', 'recordUnit', 'path', 'completedMissions', 'timestamp']);
+        hasOnlyAllowedFields(['userId', 'themeTitle', 'photoUrl', 'videoUrl', 'audioUrl', 'noteText', 'recordUnit', 'path', 'completedMissions', 'timestamp', 'isPublic', 'locationName']);
       allow delete: if isOwner(resource.data.userId) || isAdmin();
     }
   }
