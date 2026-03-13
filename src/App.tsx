@@ -89,7 +89,7 @@ export default function App() {
   // New Features State
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showCombineModal, setShowCombineModal] = useState(false);
-  const [selectedThemesForCombine, setSelectedThemesForCombine] = useState<WalkTheme[]>([]);
+  const [selectedThemesForCombine, setSelectedThemesForCombine] = useState<string[]>([]);
   const [isTracking, setIsTracking] = useState(false);
   const [path, setPath] = useState<{lat: number, lng: number, timestamp: number}[]>([]);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
@@ -99,6 +99,7 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+  const [nineGridImage, setNineGridImage] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -406,6 +407,83 @@ export default function App() {
     }
   };
 
+  const generateNineGridImage = async () => {
+    if (!currentTheme) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 1080;
+    canvas.height = 1080;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.fillStyle = currentTheme.vibeColor || '#ffffff';
+    ctx.fillRect(0, 0, 1080, 1080);
+
+    const photos: string[] = [];
+    if (capturedPhoto) photos.push(capturedPhoto);
+    Object.values(missionMedia).forEach(media => {
+      if (media.type === 'photo') photos.push(media.data);
+    });
+
+    const padding = 40;
+    const gap = 20;
+    const size = (1080 - padding * 2 - gap * 2) / 3;
+
+    for (let i = 0; i < 9; i++) {
+      const row = Math.floor(i / 3);
+      const col = i % 3;
+      const x = padding + col * (size + gap);
+      const y = padding + row * (size + gap);
+
+      if (i === 4) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(x, y, size, size);
+        ctx.fillStyle = '#000000';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 36px sans-serif';
+        
+        const title = currentTheme.title || 'City Walk';
+        ctx.fillText(title, x + size/2, y + size/2 - 40, size - 40);
+        
+        ctx.font = '24px sans-serif';
+        ctx.fillText(new Date().toLocaleDateString(), x + size/2, y + size/2 + 20);
+        
+        ctx.font = '20px sans-serif';
+        ctx.fillText(locationContext || '城市漫步', x + size/2, y + size/2 + 60, size - 40);
+      } else {
+        const photoIndex = i > 4 ? i - 1 : i;
+        if (photoIndex < photos.length) {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.src = photos[photoIndex];
+          await new Promise(resolve => {
+            img.onload = () => {
+              const scale = Math.max(size / img.width, size / img.height);
+              const w = img.width * scale;
+              const h = img.height * scale;
+              const dx = x + (size - w) / 2;
+              const dy = y + (size - h) / 2;
+              
+              ctx.save();
+              ctx.beginPath();
+              ctx.rect(x, y, size, size);
+              ctx.clip();
+              ctx.drawImage(img, dx, dy, w, h);
+              ctx.restore();
+              resolve(null);
+            };
+            img.onerror = () => resolve(null);
+          });
+        } else {
+          ctx.fillStyle = 'rgba(255,255,255,0.2)';
+          ctx.fillRect(x, y, size, size);
+        }
+      }
+    }
+
+    return canvas.toDataURL('image/jpeg', 0.9);
+  };
+
   const saveWalk = async () => {
     if (!user || !currentTheme) return;
     setIsUploading(true);
@@ -455,7 +533,13 @@ export default function App() {
         completedMissions: uploadedMissions,
         timestamp: serverTimestamp()
       });
-      alert("漫步记录已保存到您的足迹！");
+      
+      const nineGrid = await generateNineGridImage();
+      if (nineGrid) {
+        setNineGridImage(nineGrid);
+      } else {
+        alert("漫步记录已保存到您的足迹！");
+      }
       resetWalk();
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'walks');
@@ -1135,19 +1219,18 @@ export default function App() {
               <p className="text-sm opacity-60 mb-6 text-center italic">选择 2 个主题，将它们的灵魂融合为一次独特的漫步。</p>
               
               <div className="grid grid-cols-2 gap-3 mb-8">
-                {PRESET_THEMES.map((t, i) => {
-                  const isSelected = selectedThemesForCombine.some(st => st.title === t.title);
+                {['形状漫步', '色彩漫步', '声音漫步', '动物漫步', '气味漫步'].map((category, i) => {
+                  const isSelected = selectedThemesForCombine.includes(category);
                   return (
                     <button
                       key={i}
                       onClick={() => {
-                        if (isSelected) setSelectedThemesForCombine(prev => prev.filter(st => st.title !== t.title));
-                        else if (selectedThemesForCombine.length < 2) setSelectedThemesForCombine(prev => [...prev, t]);
+                        if (isSelected) setSelectedThemesForCombine(prev => prev.filter(c => c !== category));
+                        else if (selectedThemesForCombine.length < 2) setSelectedThemesForCombine(prev => [...prev, category]);
                       }}
                       className={`p-4 rounded-3xl border-2 transition-all text-left ${isSelected ? 'border-brand-500 bg-brand-500/5' : 'border-brand-200 hover:border-brand-500/30'}`}
                     >
-                      <div className="text-[10px] uppercase font-bold opacity-40 mb-1">{t.category}</div>
-                      <div className="font-bold text-sm leading-tight">{t.title}</div>
+                      <div className="font-bold text-sm leading-tight">{category}</div>
                     </button>
                   );
                 })}
@@ -1239,6 +1322,48 @@ export default function App() {
         )}
       </AnimatePresence>
  
+      {/* Nine Grid Modal */}
+      <AnimatePresence>
+        {nineGridImage && (
+          <div className="fixed inset-0 z-50 bg-brand-900/80 backdrop-blur-md flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-md rounded-[40px] p-6 shadow-2xl flex flex-col items-center"
+            >
+              <div className="flex justify-between items-center w-full mb-4">
+                <h3 className="serif text-xl font-bold">漫步九宫格</h3>
+                <button onClick={() => {
+                  setNineGridImage(null);
+                  alert("漫步记录已保存到您的足迹！");
+                }}><X className="w-6 h-6" /></button>
+              </div>
+              <p className="text-sm opacity-60 mb-6 text-center">长按图片保存，或点击下方按钮下载</p>
+              
+              <div className="w-full aspect-square rounded-2xl overflow-hidden shadow-lg mb-6">
+                <img src={nineGridImage} alt="九宫格" className="w-full h-full object-cover" />
+              </div>
+
+              <a 
+                href={nineGridImage}
+                download={`citywalk-${Date.now()}.jpg`}
+                className="w-full py-4 bg-brand-500 text-white rounded-2xl font-bold flex items-center justify-center gap-2"
+                onClick={() => {
+                  setTimeout(() => {
+                    setNineGridImage(null);
+                    alert("漫步记录已保存到您的足迹！");
+                  }, 500);
+                }}
+              >
+                <Save className="w-5 h-5" />
+                保存图片
+              </a>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* History Overlay */}
       <AnimatePresence>
         {showHistory && (

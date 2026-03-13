@@ -168,19 +168,20 @@ export async function searchLocationContext(query: string): Promise<string> {
   }
 }
 
-export async function generateCombinedTheme(themes: WalkTheme[], locationName: string, locationContext: string, walkMode: string): Promise<WalkTheme> {
-  const titles = themes.map(t => t.title).join(", ");
+export async function generateCombinedTheme(categories: string[], locationName: string, locationContext: string, walkMode: string): Promise<WalkTheme> {
+  const titles = categories.join(" 与 ");
   const modeInstruction = walkMode === 'pure' 
     ? "【纯粹模式】：只生成1个极其简单、宽泛的任务，虽然是组合主题，但请保持任务相对独立和简单，主打完全自由的探索。"
     : "【进阶模式】：生成3个具体、有一定观察深度的任务，必须将这些主题的元素融合在一起（例如：寻找一个红色的圆形物体并记录它发出的声音）。复杂度适中。";
 
-  const prompt = `结合以下 City Walk 主题：${titles}。
+  const prompt = `结合以下 City Walk 主题方向：${titles}。
   探索区域: "${locationName}" (周边环境特征: ${locationContext})
   模式: ${modeInstruction}
   
   要求：
-  - 不要局限于特定的事物（如特定的颜色或形状），每次生成都要有高度的随机性。
+  - 组合的范围包括形状、声音、颜色、动物、气味等，并且**绝对不要拘泥于特定的颜色或者形状**（例如不要总是红色、圆形，让AI每次随机生成不同的颜色、形状、声音等进行组合）。
   - 创建一个融合了这些概念的单一集成主题。
+  - 任务必须是随机生成的，每次都要有新鲜感。
   
   以 JSON 格式返回结果：
   {
