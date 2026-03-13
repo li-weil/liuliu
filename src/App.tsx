@@ -31,17 +31,14 @@ import {
   Video,
   FileText,
   StopCircle,
-  Trash2,
-  Search,
-  Users,
-  Image as ImageIcon
+  Trash2
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { generateAITheme, generateCombinedTheme, PRESET_THEMES, WalkTheme, fetchNearbyPOIs, generateDynamicPreset, getLocationContext, searchLocationContext } from './services/themeService';
+import { generateAITheme, generateCombinedTheme, PRESET_THEMES, WalkTheme, fetchNearbyPOIs, generateDynamicPreset, getLocationContext } from './services/themeService';
 import { auth, db, storage, signIn, logOut, OperationType, handleFirestoreError } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, addDoc, serverTimestamp, query, where, onSnapshot, doc, setDoc, orderBy, limit } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, query, where, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 
 // Fix Leaflet icon issue
@@ -71,17 +68,10 @@ export default function App() {
   const [season, setSeason] = useState('春季');
   const [preference, setPreference] = useState('市井生活');
   const [locationContext, setLocationContext] = useState<string>('城市街道');
-  const [searchLocation, setSearchLocation] = useState('');
-  const [walkMode, setWalkMode] = useState<'pure' | 'advanced'>('pure');
-  const [activeTab, setActiveTab] = useState<'explore' | 'community'>('explore');
   const [recordUnit, setRecordUnit] = useState<'location' | 'event' | 'image'>('image');
   const [completedMissions, setCompletedMissions] = useState<Record<string, boolean>>({});
-  const [missionMedia, setMissionMedia] = useState<Record<string, { type: 'photo' | 'video' | 'audio', data: string }>>({});
-  const [activeMission, setActiveMission] = useState<string | null>(null);
   const [history, setHistory] = useState<WalkTheme[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [communityWalks, setCommunityWalks] = useState<any[]>([]);
-  const [isPublic, setIsPublic] = useState(true);
   
   // New Features State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -163,27 +153,6 @@ export default function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [isTracking, pois.length]);
 
-  useEffect(() => {
-    if (activeTab === 'community') {
-      const q = query(collection(db, 'walks'), where('isPublic', '==', true), orderBy('timestamp', 'desc'), limit(20));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const walks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setCommunityWalks(walks);
-      }, (error) => {
-        console.error("Error fetching community walks:", error);
-      });
-      return () => unsubscribe();
-    }
-  }, [activeTab]);
-
-  const handleSearchLocation = async () => {
-    if (!searchLocation.trim()) return;
-    setIsGenerating(true);
-    const context = await searchLocationContext(searchLocation);
-    setLocationContext(context);
-    setIsGenerating(false);
-  };
-
   const handleRandomTheme = async () => {
     setIsGenerating(true);
     // Get location context if possible
@@ -194,7 +163,7 @@ export default function App() {
         setLocationContext(newContext);
         const categories = ['形状', '色彩', '声音', '质感', '气味'];
         const randomCat = categories[Math.floor(Math.random() * categories.length)];
-        const theme = await generateDynamicPreset(randomCat, newContext, walkMode);
+        const theme = await generateDynamicPreset(randomCat, newContext);
         setCurrentTheme(theme);
         resetWalk();
         setIsGenerating(false);
@@ -202,7 +171,7 @@ export default function App() {
     } else {
       const categories = ['形状', '色彩', '声音', '质感', '气味'];
       const randomCat = categories[Math.floor(Math.random() * categories.length)];
-      const theme = await generateDynamicPreset(randomCat, context, walkMode);
+      const theme = await generateDynamicPreset(randomCat, context);
       setCurrentTheme(theme);
       resetWalk();
       setIsGenerating(false);
@@ -212,24 +181,24 @@ export default function App() {
   const handleAITheme = async () => {
     setIsGenerating(true);
     let context = locationContext;
-    if (navigator.geolocation && !searchLocation) {
+    if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(async (pos) => {
         const newContext = await getLocationContext(pos.coords.latitude, pos.coords.longitude);
         setLocationContext(newContext);
-        const theme = await generateAITheme(mood, weather, season, preference, newContext, walkMode);
+        const theme = await generateAITheme(mood, weather, season, preference, newContext);
         setCurrentTheme(theme);
         resetWalk();
         setHistory(prev => [theme, ...prev].slice(0, 10));
         setIsGenerating(false);
       }, async () => {
-        const theme = await generateAITheme(mood, weather, season, preference, context, walkMode);
+        const theme = await generateAITheme(mood, weather, season, preference, context);
         setCurrentTheme(theme);
         resetWalk();
         setHistory(prev => [theme, ...prev].slice(0, 10));
         setIsGenerating(false);
       });
     } else {
-      const theme = await generateAITheme(mood, weather, season, preference, context, walkMode);
+      const theme = await generateAITheme(mood, weather, season, preference, context);
       setCurrentTheme(theme);
       resetWalk();
       setHistory(prev => [theme, ...prev].slice(0, 10));
@@ -241,7 +210,7 @@ export default function App() {
     if (selectedThemesForCombine.length < 2) return;
     setIsGenerating(true);
     setShowCombineModal(false);
-    const theme = await generateCombinedTheme(selectedThemesForCombine, locationContext, walkMode);
+    const theme = await generateCombinedTheme(selectedThemesForCombine);
     setCurrentTheme(theme);
     resetWalk();
     setIsGenerating(false);
@@ -250,8 +219,6 @@ export default function App() {
 
   const resetWalk = () => {
     setCompletedMissions({});
-    setMissionMedia({});
-    setActiveMission(null);
     setPath([]);
     setIsTracking(false);
     setCapturedPhoto(null);
@@ -261,7 +228,10 @@ export default function App() {
   };
 
   const toggleMission = (mission: string) => {
-    setActiveMission(mission);
+    setCompletedMissions(prev => ({
+      ...prev,
+      [mission]: !prev[mission]
+    }));
   };
 
   const startCamera = async () => {
@@ -284,13 +254,7 @@ export default function App() {
         canvasRef.current.height = videoRef.current.videoHeight;
         context.drawImage(videoRef.current, 0, 0);
         const dataUrl = canvasRef.current.toDataURL('image/jpeg');
-        if (activeMission) {
-          setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'photo', data: dataUrl } }));
-          setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-          setActiveMission(null);
-        } else {
-          setCapturedPhoto(dataUrl);
-        }
+        setCapturedPhoto(dataUrl);
         stopMediaStream();
       }
     }
@@ -320,16 +284,7 @@ export default function App() {
       mediaRecorder.onstop = () => {
         const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
         const reader = new FileReader();
-        reader.onloadend = () => {
-          const dataUrl = reader.result as string;
-          if (activeMission) {
-            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'video', data: dataUrl } }));
-            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-            setActiveMission(null);
-          } else {
-            setCapturedVideo(dataUrl);
-          }
-        };
+        reader.onloadend = () => setCapturedVideo(reader.result as string);
         reader.readAsDataURL(blob);
         stopMediaStream();
       };
@@ -359,16 +314,7 @@ export default function App() {
       mediaRecorder.onstop = () => {
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         const reader = new FileReader();
-        reader.onloadend = () => {
-          const dataUrl = reader.result as string;
-          if (activeMission) {
-            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'audio', data: dataUrl } }));
-            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-            setActiveMission(null);
-          } else {
-            setCapturedAudio(dataUrl);
-          }
-        };
+        reader.onloadend = () => setCapturedAudio(reader.result as string);
         reader.readAsDataURL(blob);
         stream.getTracks().forEach(t => t.stop());
       };
@@ -412,15 +358,6 @@ export default function App() {
         audioUrl = await getDownloadURL(storageRef);
       }
 
-      const uploadedMissions = await Promise.all(
-        Object.entries(missionMedia).map(async ([mission, media]: [string, any]) => {
-          const storageRef = ref(storage, `walks/${user.uid}/${Date.now()}_mission_${Math.random().toString(36).substring(7)}.${media.type === 'photo' ? 'jpg' : 'webm'}`);
-          await uploadString(storageRef, media.data, 'data_url');
-          const url = await getDownloadURL(storageRef);
-          return { mission, mediaUrl: url, mediaType: media.type };
-        })
-      );
-
       await addDoc(collection(db, 'walks'), {
         userId: user.uid,
         themeTitle: currentTheme.title,
@@ -429,10 +366,8 @@ export default function App() {
         audioUrl,
         noteText,
         recordUnit,
-        isPublic,
-        locationName: locationContext,
         path,
-        completedMissions: uploadedMissions,
+        completedMissions: Object.keys(completedMissions).filter(k => completedMissions[k]),
         timestamp: serverTimestamp()
       });
       alert("漫步记录已保存到您的足迹！");
@@ -480,27 +415,11 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col items-center p-6 md:p-12 max-w-4xl mx-auto">
       {/* Header */}
-      <header className="w-full flex justify-between items-center mb-8">
+      <header className="w-full flex justify-between items-center mb-12">
         <div className="flex items-center gap-2">
           <Compass className="w-6 h-6 text-brand-500" />
-          <h1 className="serif text-2xl font-semibold tracking-tight hidden sm:block">城市漫步者</h1>
+          <h1 className="serif text-2xl font-semibold tracking-tight">城市漫步者</h1>
         </div>
-        
-        <div className="flex items-center bg-brand-100 p-1 rounded-full">
-          <button 
-            onClick={() => setActiveTab('explore')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${activeTab === 'explore' ? 'bg-white shadow-sm text-brand-900' : 'text-brand-900/60 hover:text-brand-900'}`}
-          >
-            探索
-          </button>
-          <button 
-            onClick={() => setActiveTab('community')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all flex items-center gap-1 ${activeTab === 'community' ? 'bg-white shadow-sm text-brand-900' : 'text-brand-900/60 hover:text-brand-900'}`}
-          >
-            <Users className="w-4 h-4" /> 社区
-          </button>
-        </div>
-
         <div className="flex gap-4 items-center">
           {user ? (
             <div className="flex items-center gap-3">
@@ -528,48 +447,8 @@ export default function App() {
       {/* Main Content */}
       <main className="w-full flex-1 flex flex-col items-center gap-8">
         
-        {activeTab === 'explore' && (
-          <>
-            {/* Controls */}
-            <div className="w-full bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 mb-4 flex flex-col md:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-4 w-full md:w-auto">
-                <div className="flex items-center bg-brand-100 p-1 rounded-full">
-                  <button 
-                    onClick={() => setWalkMode('pure')}
-                    className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${walkMode === 'pure' ? 'bg-white shadow-sm text-brand-900' : 'text-brand-900/60 hover:text-brand-900'}`}
-                  >
-                    纯粹模式
-                  </button>
-                  <button 
-                    onClick={() => setWalkMode('advanced')}
-                    className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${walkMode === 'advanced' ? 'bg-white shadow-sm text-brand-900' : 'text-brand-900/60 hover:text-brand-900'}`}
-                  >
-                    进阶模式
-                  </button>
-                </div>
-                <div className="text-xs opacity-60 hidden md:block">
-                  {walkMode === 'pure' ? '自由探索，单一维度' : '复杂任务，元素组合'}
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-2 w-full md:w-auto">
-                <div className="relative flex-1 md:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-40" />
-                  <input 
-                    type="text" 
-                    placeholder="搜索探索区域 (默认当前位置)" 
-                    value={searchLocation}
-                    onChange={(e) => setSearchLocation(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 bg-white rounded-full border border-brand-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-                <button onClick={handleSearchLocation} className="px-4 py-2 bg-brand-500 text-white rounded-full text-sm font-medium hover:bg-brand-600 transition-colors">
-                  定位
-                </button>
-              </div>
-            </div>
-
-            <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        {/* Controls */}
+        <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div className="bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 flex flex-col gap-3">
             <label className="text-[10px] uppercase tracking-widest font-semibold opacity-50">当前心情</label>
             <div className="flex flex-wrap gap-2">
@@ -745,57 +624,20 @@ export default function App() {
                         </div>
                       </div>
                       {currentTheme.missions.map((mission, idx) => (
-                        <div key={idx} className="flex flex-col gap-2">
-                          <button
-                            onClick={() => toggleMission(mission)}
-                            className={`w-full flex items-center gap-3 p-3 rounded-2xl transition-colors text-left group ${activeMission === mission ? 'bg-brand-200' : 'hover:bg-brand-100'}`}
-                          >
-                            {completedMissions[mission] ? (
-                              <CheckCircle2 className="w-5 h-5 text-brand-500" />
-                            ) : (
-                              <Circle className="w-5 h-5 opacity-20 group-hover:opacity-40" />
-                            )}
-                            <span className={`text-sm flex-1 ${completedMissions[mission] ? 'line-through opacity-40' : ''}`}>
-                              {mission}
-                            </span>
-                            {missionMedia[mission] && (
-                              <div className="w-6 h-6 bg-brand-500 rounded-full flex items-center justify-center">
-                                {missionMedia[mission].type === 'photo' ? <ImageIcon className="w-3 h-3 text-white" /> : 
-                                 missionMedia[mission].type === 'video' ? <Video className="w-3 h-3 text-white" /> : 
-                                 <Mic className="w-3 h-3 text-white" />}
-                              </div>
-                            )}
-                          </button>
-                          
-                          {/* Active Mission Media Capture Area */}
-                          <AnimatePresence>
-                            {activeMission === mission && !completedMissions[mission] && (
-                              <motion.div 
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                exit={{ opacity: 0, height: 0 }}
-                                className="pl-11 pr-3 overflow-hidden"
-                              >
-                                <div className="p-3 bg-brand-50 rounded-xl border border-brand-200 flex flex-col gap-2">
-                                  <span className="text-[10px] font-bold opacity-50 uppercase">打卡此任务</span>
-                                  <div className="flex gap-2">
-                                    <button onClick={startCamera} className="flex-1 py-2 bg-white rounded-lg border border-brand-200 flex items-center justify-center gap-2 hover:bg-brand-100">
-                                      <Camera className="w-4 h-4 opacity-60" /> <span className="text-xs">拍照</span>
-                                    </button>
-                                    <button onClick={isRecordingVideo ? stopVideoRecording : startVideoRecording} className={`flex-1 py-2 rounded-lg border flex items-center justify-center gap-2 ${isRecordingVideo ? 'bg-red-500 text-white border-red-500' : 'bg-white border-brand-200 hover:bg-brand-100'}`}>
-                                      {isRecordingVideo ? <StopCircle className="w-4 h-4" /> : <Video className="w-4 h-4 opacity-60" />} 
-                                      <span className="text-xs">{isRecordingVideo ? '停止' : '录像'}</span>
-                                    </button>
-                                    <button onClick={isRecordingAudio ? stopAudioRecording : startAudioRecording} className={`flex-1 py-2 rounded-lg border flex items-center justify-center gap-2 ${isRecordingAudio ? 'bg-red-500 text-white border-red-500' : 'bg-white border-brand-200 hover:bg-brand-100'}`}>
-                                      {isRecordingAudio ? <StopCircle className="w-4 h-4" /> : <Mic className="w-4 h-4 opacity-60" />} 
-                                      <span className="text-xs">{isRecordingAudio ? '停止' : '录音'}</span>
-                                    </button>
-                                  </div>
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
+                        <button
+                          key={idx}
+                          onClick={() => toggleMission(mission)}
+                          className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-brand-100 transition-colors text-left group"
+                        >
+                          {completedMissions[mission] ? (
+                            <CheckCircle2 className="w-5 h-5 text-brand-500" />
+                          ) : (
+                            <Circle className="w-5 h-5 opacity-20 group-hover:opacity-40" />
+                          )}
+                          <span className={`text-sm ${completedMissions[mission] ? 'line-through opacity-40' : ''}`}>
+                            {mission}
+                          </span>
+                        </button>
                       ))}
                     </div>
 
@@ -803,20 +645,11 @@ export default function App() {
                     {Object.values(completedMissions).some(v => v) && (
                       <div className="mt-6 p-4 bg-brand-50 rounded-2xl border border-dashed border-brand-300">
                         <label className="text-[10px] uppercase tracking-widest font-semibold opacity-50 block mb-2">任务记录区</label>
-                        <div className="space-y-3">
+                        <div className="space-y-2">
                           {Object.keys(completedMissions).filter(m => completedMissions[m]).map((m, i) => (
-                            <div key={i} className="flex flex-col gap-2 text-xs opacity-80 bg-white p-2 rounded-lg border border-brand-100">
-                              <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 bg-brand-500 rounded-full" />
-                                <span className="font-medium">{m}</span>
-                              </div>
-                              {missionMedia[m] && (
-                                <div className="pl-3.5">
-                                  {missionMedia[m].type === 'photo' && <img src={missionMedia[m].data} className="w-16 h-16 object-cover rounded-md" alt="mission" />}
-                                  {missionMedia[m].type === 'video' && <video src={missionMedia[m].data} className="w-16 h-16 object-cover rounded-md" />}
-                                  {missionMedia[m].type === 'audio' && <audio src={missionMedia[m].data} controls className="h-6 w-full max-w-[200px]" />}
-                                </div>
-                              )}
+                            <div key={i} className="flex items-center gap-2 text-xs opacity-70">
+                              <div className="w-1 h-1 bg-brand-500 rounded-full" />
+                              <span>已完成: {m}</span>
                             </div>
                           ))}
                         </div>
@@ -834,7 +667,7 @@ export default function App() {
                         className="flex items-center justify-center gap-2 py-2.5 bg-brand-900 text-white rounded-2xl hover:bg-brand-900/90 transition-all"
                       >
                         <Camera className="w-4 h-4" />
-                        <span className="text-xs font-medium">{capturedPhoto ? '重拍照片' : '随手拍'}</span>
+                        <span className="text-xs font-medium">{capturedPhoto ? '重拍照片' : '拍照'}</span>
                       </button>
                       <button 
                         onClick={() => {
@@ -881,19 +714,7 @@ export default function App() {
                       />
                     </div>
                     
-                    <div className="flex items-center justify-between px-2">
-                      <label className="flex items-center gap-2 text-sm opacity-70 cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          checked={isPublic} 
-                          onChange={(e) => setIsPublic(e.target.checked)}
-                          className="rounded text-brand-500 focus:ring-brand-500"
-                        />
-                        公开分享到社区
-                      </label>
-                    </div>
-                    
-                    {user && (path.length > 0 || capturedPhoto || capturedVideo || capturedAudio || noteText || Object.keys(missionMedia).length > 0) && (
+                    {user && (path.length > 0 || capturedPhoto || capturedVideo || capturedAudio || noteText) && (
                       <button 
                         onClick={saveWalk}
                         disabled={isUploading}
@@ -1018,66 +839,6 @@ export default function App() {
             <span className="font-medium">AI 生成</span>
           </button>
         </div>
-          </>
-        )}
-
-        {activeTab === 'community' && (
-          <div className="w-full max-w-4xl">
-            <h2 className="serif text-2xl font-bold mb-6">社区漫步足迹</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {communityWalks.length === 0 ? (
-                <div className="col-span-full text-center py-12 opacity-50">暂无公开的漫步记录，去探索并分享你的第一次漫步吧！</div>
-              ) : (
-                communityWalks.map((walk) => (
-                  <div key={walk.id} className="bg-white rounded-3xl p-6 shadow-sm border border-brand-200 flex flex-col gap-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-bold text-lg">{walk.themeTitle}</h3>
-                        <p className="text-xs opacity-50 flex items-center gap-1 mt-1">
-                          <MapPin className="w-3 h-3" /> {walk.locationName || '未知地点'}
-                        </p>
-                      </div>
-                      <span className="text-[10px] px-2 py-1 bg-brand-100 rounded-full text-brand-900 font-medium">
-                        {new Date(walk.timestamp?.toDate()).toLocaleDateString()}
-                      </span>
-                    </div>
-                    
-                    {walk.noteText && (
-                      <p className="text-sm opacity-80 italic">"{walk.noteText}"</p>
-                    )}
-
-                    {walk.completedMissions && walk.completedMissions.length > 0 && (
-                      <div className="bg-brand-50 p-3 rounded-xl">
-                        <span className="text-[10px] uppercase font-bold opacity-50 block mb-2">完成的任务</span>
-                        <div className="flex flex-col gap-2">
-                          {walk.completedMissions.map((m: any, i: number) => (
-                            <div key={i} className="flex items-start gap-2 text-xs">
-                              <CheckCircle2 className="w-3 h-3 text-brand-500 mt-0.5 shrink-0" />
-                              <div className="flex-1">
-                                <span>{m.mission}</span>
-                                {m.mediaUrl && (
-                                  <div className="mt-1">
-                                    {m.mediaType === 'photo' && <img src={m.mediaUrl} className="w-16 h-16 object-cover rounded-md" alt="mission" />}
-                                    {m.mediaType === 'video' && <video src={m.mediaUrl} className="w-16 h-16 object-cover rounded-md" />}
-                                    {m.mediaType === 'audio' && <audio src={m.mediaUrl} controls className="h-6 w-full max-w-[200px]" />}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {walk.photoUrl && !walk.completedMissions?.some((m: any) => m.mediaUrl === walk.photoUrl) && (
-                      <img src={walk.photoUrl} className="w-full h-48 object-cover rounded-2xl" alt="walk cover" />
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
       </main>
  
       {/* Combine Modal */}

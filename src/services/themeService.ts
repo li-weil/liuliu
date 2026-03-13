@@ -17,24 +17,19 @@ export interface MapPOI {
   lng?: number;
 }
 
-export async function generateAITheme(mood: string, weather: string, season: string, preference: string, locationContext: string, walkMode: string): Promise<WalkTheme> {
-  const modeInstruction = walkMode === 'pure' 
-    ? "【纯粹模式】：任务简单、普适，主打自由探索，不要对元素（如形状、颜色、声音）进行复杂的组合，保持单一维度的纯粹体验。"
-    : "【进阶模式】：任务复杂、具体，包含多种元素的组合（例如：寻找一个红色的圆形物体并记录它发出的声音），增加趣味性和挑战性。";
-
+export async function generateAITheme(mood: string, weather: string, season: string, preference: string, locationContext: string): Promise<WalkTheme> {
   const prompt = `根据以下参数生成一个创意 City Walk 主题：
   - 心情: "${mood}"
   - 天气: "${weather}"
   - 季节: "${season}"
   - 偏好: "${preference}"
-  - 探索区域 (5公里范围内): "${locationContext}"
-  - 模式: ${modeInstruction}
+  - 当前位置环境: "${locationContext}"
   
   要求：
   1. 主题应该具有启发性、诗意并鼓励探索。
-  2. 任务必须具体且可操作，并且必须与“探索区域”高度契合。
+  2. 任务必须具体且可操作，并且必须与“当前位置环境”高度契合。例如，如果在现代商业区，不要生成“寻找老弄堂”的任务。
   3. 每次生成的内容必须具有高度的随机性和独特性，避免重复。
-  4. 即使输入相同，也要尝试从不同的角度切入。
+  4. 即使输入相同，也要尝试从不同的角度（如感官、历史、建筑、情感等）切入。
 
   以 JSON 格式返回结果，结构如下：
   {
@@ -81,19 +76,13 @@ export async function generateAITheme(mood: string, weather: string, season: str
   }
 }
 
-export async function generateDynamicPreset(category: string, locationContext: string, walkMode: string): Promise<WalkTheme> {
-  const modeInstruction = walkMode === 'pure' 
-    ? "【纯粹模式】：任务简单、普适，主打自由探索，不要对元素进行复杂的组合。"
-    : "【进阶模式】：任务复杂、具体，包含多种元素的组合，增加趣味性和挑战性。";
-
+export async function generateDynamicPreset(category: string, locationContext: string): Promise<WalkTheme> {
   const prompt = `生成一个关于 "${category}" 的 City Walk 主题。
-  探索区域 (5公里范围内): "${locationContext}"
-  模式: ${modeInstruction}
+  当前位置环境: "${locationContext}"
   
   特别要求：
-  - 如果是“形状漫步”，不要局限于圆形，每次随机选择任意图形或组合。
-  - 如果是“色彩漫步”，不要局限于单一颜色，每次随机选择任意颜色、对比色或渐变色。
-  - 如果是“声音漫步”或“动物漫步”，同样不要局限于特定的事物，保持高度随机性。
+  - 如果是“形状漫步”，不要局限于圆形，可以是三角形、多边形、不规则图形或多种图形的组合。
+  - 如果是“色彩漫步”，不要局限于单一颜色，可以是对比色、渐变色或特定的色彩组合。
   - 任务必须是随机生成的，每次都要有新鲜感。
   - 任务必须符合当前环境（${locationContext}）。
 
@@ -140,7 +129,7 @@ export async function getLocationContext(lat: number, lng: number): Promise<stri
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `根据经纬度 (${lat}, ${lng})，描述该地点及其周边 5 公里范围内的城市环境特征（例如：现代商业区、老旧居民区、公园绿地、工业遗址等）。只需返回简短的描述词。`,
+      contents: `根据经纬度 (${lat}, ${lng})，描述该地点的城市环境特征（例如：现代商业区、老旧居民区、公园绿地、工业遗址等）。只需返回简短的描述词。`,
       config: {
         tools: [{ googleSearch: {} }]
       }
@@ -152,36 +141,11 @@ export async function getLocationContext(lat: number, lng: number): Promise<stri
   }
 }
 
-export async function searchLocationContext(query: string): Promise<string> {
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `搜索地点 "${query}"，并描述该地点及其周边 5 公里范围内的城市环境特征（例如：现代商业区、老旧居民区、公园绿地、工业遗址等）。只需返回简短的描述词。`,
-      config: {
-        tools: [{ googleSearch: {} }]
-      }
-    });
-    return response.text || query;
-  } catch (error) {
-    console.error("Error searching location context:", error);
-    return query;
-  }
-}
-
-export async function generateCombinedTheme(themes: WalkTheme[], locationContext: string, walkMode: string): Promise<WalkTheme> {
+export async function generateCombinedTheme(themes: WalkTheme[]): Promise<WalkTheme> {
   const titles = themes.map(t => t.title).join(", ");
-  const modeInstruction = walkMode === 'pure' 
-    ? "【纯粹模式】：虽然是组合主题，但请保持任务相对独立和简单，主打自由探索。"
-    : "【进阶模式】：任务复杂、具体，必须将这些主题的元素深度融合在一起（例如：寻找一个红色的圆形物体并记录它发出的声音），增加趣味性和挑战性。";
-
   const prompt = `结合以下 City Walk 主题：${titles}。
-  探索区域 (5公里范围内): "${locationContext}"
-  模式: ${modeInstruction}
-  
-  要求：
-  - 不要局限于特定的事物（如特定的颜色或形状），每次生成都要有高度的随机性。
-  - 创建一个融合了这些概念的单一集成主题。
-  
+  创建一个融合了这些概念的单一集成主题。
+  例如，如果主题是“形状”和“颜色”，任务可能是“找到一个红色的圆形物体”。
   以 JSON 格式返回结果：
   {
     "title": "组合主题标题",
