@@ -1,0 +1,53 @@
+import { apiRequest } from './apiClient';
+
+export interface PathPoint {
+  lat: number;
+  lng: number;
+  timestamp: number;
+}
+
+export interface CompletedMissionPayload {
+  mission: string;
+  mediaUrl: string;
+  mediaType: string;
+}
+
+export interface CreateWalkPayload {
+  themeTitle: string;
+  themeCategory?: string;
+  locationName?: string;
+  recordUnit: 'location' | 'event' | 'image';
+  isPublic: boolean;
+  noteText?: string;
+  path: PathPoint[];
+  completedMissions: CompletedMissionPayload[];
+  photoUrl?: string;
+  videoUrl?: string;
+  audioUrl?: string;
+}
+
+export interface WalkItem {
+  id: number;
+  themeTitle: string;
+  themeCategory?: string;
+  locationName?: string;
+  recordUnit: string;
+  isPublic: boolean;
+  noteText?: string;
+  photoUrl?: string;
+  videoUrl?: string;
+  audioUrl?: string;
+  path?: PathPoint[];
+  completedMissions?: CompletedMissionPayload[];
+}
+
+export async function createWalk(payload: CreateWalkPayload): Promise<WalkItem> {
+  return apiRequest<WalkItem>('/api/v1/walks', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPublicWalks(page = 1, pageSize = 20): Promise<WalkItem[]> {
+  return apiRequest<WalkItem[]>(`/api/v1/walks/public?page=${page}&pageSize=${pageSize}`);
+}

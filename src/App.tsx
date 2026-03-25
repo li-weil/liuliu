@@ -1,1507 +1,954 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Shuffle, 
-  Sparkles, 
-  MapPin, 
-  Camera, 
-  CheckCircle2, 
-  Circle, 
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import L from 'leaflet';
+import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import {
   Compass,
-  Wind,
-  Sun,
-  Cloud,
-  CloudRain,
   History,
-  Info,
-  Plus,
-  Share2,
+  LoaderCircle,
   LogIn,
   LogOut,
-  Layers,
-  X,
-  Navigation,
-  Save,
-  Mic,
-  Video,
-  FileText,
-  StopCircle,
-  Trash2,
+  MapPin,
   Search,
+  Shuffle,
+  Sparkles,
   Users,
-  Image as ImageIcon,
-  Upload
 } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
-import L from 'leaflet';
-import { generateAITheme, generateCombinedTheme, PRESET_THEMES, WalkTheme, generateDynamicPreset, getLocationContext, searchLocationContext } from './services/themeService';
-import { auth, db, storage, signIn, logOut, OperationType, handleFirestoreError } from './firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, addDoc, serverTimestamp, query, where, onSnapshot, doc, setDoc, orderBy, limit } from 'firebase/firestore';
-import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+import {
+  AppUser,
+  consumeLoginCallback,
+  getStoredToken,
+  loadCurrentUser,
+  logoutFromServer,
+  redirectToWechatLogin,
+} from './services/authApi';
+import {
+  PRESET_THEMES,
+  WalkTheme,
+  generateAITheme,
+  generateCombinedTheme,
+  generateDynamicPreset,
+  MapPOI,
+  getLocationContext,
+} from './services/themeService';
+import { createWalk, fetchPublicWalks, WalkItem } from './services/walkApi';
+import { submitTheme } from './services/themeCommunityApi';
+import { fetchNearbyPois, searchLocations } from './services/mapApi';
 
-// Fix Leaflet icon issue
-// @ts-ignore
-delete L.Icon.Default.prototype._getIconUrl;
+type SearchLocation = {
+  name: string;
+  lat: number;
+  lng: number;
+};
+
+type PathPoint = {
+  lat: number;
+  lng: number;
+  timestamp: number;
+};
+
+const RANDOM_CATEGORIES = ['形状漫步', '颜色漫步', '声音漫步', '街区漫步', '质感漫步'];
+const COMBINE_CATEGORIES = ['形状漫步', '颜色漫步', '声音漫步', '街区漫步', '自然漫步'];
+const DEFAULT_CENTER: [number, number] = [31.2304, 121.4737];
+
+delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-// Map Component to handle view updates
-function MapUpdater({ center }: { center: [number, number] }) {
+function MapViewUpdater(props: { center: [number, number] }) {
+  const { center } = props;
   const map = useMap();
+
   useEffect(() => {
-    map.setView(center, 15);
+    map.setView(center, 14);
   }, [center, map]);
+
   return null;
 }
 
+function MapClickSelector(props: { onSelect: (lat: number, lng: number) => void }) {
+  const { onSelect } = props;
+
+  useMapEvents({
+    click(event) {
+      onSelect(event.latlng.lat, event.latlng.lng);
+    },
+  });
+
+  return null;
+}
+
+function calculatePathDistance(points: PathPoint[]) {
+  if (points.length < 2) {
+    return 0;
+  }
+
+  let totalMeters = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    totalMeters += L.latLng(points[index - 1].lat, points[index - 1].lng).distanceTo(
+      L.latLng(points[index].lat, points[index].lng),
+    );
+  }
+
+  return totalMeters;
+}
+
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [currentTheme, setCurrentTheme] = useState<WalkTheme | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [activeTab, setActiveTab] = useState<'explore' | 'community'>('explore');
+  const [currentTheme, setCurrentTheme] = useState<WalkTheme | null>(PRESET_THEMES[0]);
+  const [history, setHistory] = useState<WalkTheme[]>([]);
+  const [communityWalks, setCommunityWalks] = useState<WalkItem[]>([]);
+  const [isLoadingCommunity, setIsLoadingCommunity] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [mood, setMood] = useState('好奇');
   const [weather, setWeather] = useState('晴朗');
   const [season, setSeason] = useState('春季');
-  const [preference, setPreference] = useState('市井生活');
-  const [locationContext, setLocationContext] = useState<string>('城市街道');
-  const [searchLocation, setSearchLocation] = useState('');
-  const [searchResults, setSearchResults] = useState<{name: string, lat: number, lng: number}[]>([]);
-  const [selectedLocation, setSelectedLocation] = useState<{name: string, lat: number, lng: number} | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
+  const [preference, setPreference] = useState('城市生活');
   const [walkMode, setWalkMode] = useState<'pure' | 'advanced'>('pure');
-  const [activeTab, setActiveTab] = useState<'explore' | 'community'>('explore');
-  const [recordUnit, setRecordUnit] = useState<'location' | 'event' | 'image'>('image');
-  const [completedMissions, setCompletedMissions] = useState<Record<string, boolean>>({});
-  const [missionMedia, setMissionMedia] = useState<Record<string, { type: 'photo' | 'video' | 'audio', data: string }>>({});
-  const [activeMission, setActiveMission] = useState<string | null>(null);
-  const [history, setHistory] = useState<WalkTheme[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [communityWalks, setCommunityWalks] = useState<any[]>([]);
-  const [isPublic, setIsPublic] = useState(true);
-  
-  // New Features State
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showCombineModal, setShowCombineModal] = useState(false);
+  const [locationContext, setLocationContext] = useState('城市街道');
+  const [searchLocation, setSearchLocation] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchLocation[]>([]);
+  const [selectedLocation, setSelectedLocation] = useState<SearchLocation | null>(null);
   const [selectedThemesForCombine, setSelectedThemesForCombine] = useState<string[]>([]);
-  const [isTracking, setIsTracking] = useState(false);
-  const [path, setPath] = useState<{lat: number, lng: number, timestamp: number}[]>([]);
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
-  const [capturedVideo, setCapturedVideo] = useState<string | null>(null);
-  const [capturedAudio, setCapturedAudio] = useState<string | null>(null);
+  const [nearbyPois, setNearbyPois] = useState<MapPOI[]>([]);
   const [noteText, setNoteText] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
-  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
-  const [isRecordingVideo, setIsRecordingVideo] = useState(false);
-  const [nineGridImage, setNineGridImage] = useState<string | null>(null);
-
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const videoChunksRef = useRef<Blob[]>([]);
+  const [isPublic, setIsPublic] = useState(true);
+  const [path, setPath] = useState<PathPoint[]>([]);
+  const [isTracking, setIsTracking] = useState(false);
+  const [showCreateTheme, setShowCreateTheme] = useState(false);
+  const searchTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (u) {
-        // Sync user to firestore
-        setDoc(doc(db, 'users', u.uid), {
-          uid: u.uid,
-          email: u.email,
-          displayName: u.displayName,
-          photoURL: u.photoURL,
-          lastLogin: serverTimestamp()
-        }, { merge: true });
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const randomPreset = PRESET_THEMES[Math.floor(Math.random() * PRESET_THEMES.length)];
-    setCurrentTheme(randomPreset);
-  }, []);
-
-  // Geolocation Tracking
-  useEffect(() => {
-    let watchId: number;
-    if (isTracking && navigator.geolocation) {
-      watchId = navigator.geolocation.watchPosition(
-        async (pos) => {
-          const newPoint = {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            timestamp: Date.now()
-          };
-          setPath(prev => [...prev, newPoint]);
-        },
-        (err) => console.error(err),
-        { enableHighAccuracy: true }
-      );
+    const callbackPayload = consumeLoginCallback();
+    const token = callbackPayload?.token || getStoredToken();
+    if (!token) {
+      return;
     }
-    return () => navigator.geolocation.clearWatch(watchId);
+
+    loadCurrentUser()
+      .then(setUser)
+      .catch((error) => {
+        console.error('Error loading current user:', error);
+        setUser(null);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'community') {
+      return;
+    }
+
+    setIsLoadingCommunity(true);
+    fetchPublicWalks()
+      .then(setCommunityWalks)
+      .catch((error) => {
+        console.error('Error fetching community walks:', error);
+      })
+      .finally(() => {
+        setIsLoadingCommunity(false);
+      });
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!isTracking || !navigator.geolocation) {
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        setPath((prev) => [
+          ...prev,
+          {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            timestamp: Date.now(),
+          },
+        ]);
+      },
+      (error) => {
+        console.error('Track location error:', error);
+      },
+      { enableHighAccuracy: true },
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
   }, [isTracking]);
 
   useEffect(() => {
-    if (activeTab === 'community') {
-      const q = query(collection(db, 'walks'), where('isPublic', '==', true), orderBy('timestamp', 'desc'), limit(20));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const walks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setCommunityWalks(walks);
-      }, (error) => {
-        console.error("Error fetching community walks:", error);
-      });
-      return () => unsubscribe();
+    if (!selectedLocation) {
+      setNearbyPois([]);
+      return;
     }
-  }, [activeTab]);
 
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    fetchNearbyPois(selectedLocation.lat, selectedLocation.lng)
+      .then(setNearbyPois)
+      .catch((error) => {
+        console.error('Fetch nearby POIs error:', error);
+        setNearbyPois([]);
+      });
+  }, [selectedLocation]);
+
+  const currentLocationName = useMemo(
+    () => selectedLocation?.name || searchLocation || '当前位置',
+    [searchLocation, selectedLocation],
+  );
+
+  const mapCenter = useMemo<[number, number]>(() => {
+    if (selectedLocation) {
+      return [selectedLocation.lat, selectedLocation.lng];
+    }
+    if (path.length > 0) {
+      const lastPoint = path[path.length - 1];
+      return [lastPoint.lat, lastPoint.lng];
+    }
+    return DEFAULT_CENTER;
+  }, [path, selectedLocation]);
+
+  const pathCoordinates = useMemo(() => path.map((point) => [point.lat, point.lng] as [number, number]), [path]);
+  const pathDistanceKm = useMemo(() => calculatePathDistance(path) / 1000, [path]);
+
+  const pushThemeHistory = (theme: WalkTheme) => {
+    setCurrentTheme(theme);
+    setHistory((prev) => [theme, ...prev].slice(0, 10));
+  };
+
+  const resolveBrowserLocation = async () => {
+    if (!navigator.geolocation) {
+      throw new Error('当前浏览器不支持定位。');
+    }
+
+    const coords = await new Promise<GeolocationPosition>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 15000,
+      });
+    });
+
+    const lat = coords.coords.latitude;
+    const lng = coords.coords.longitude;
+    const context = await getLocationContext(lat, lng);
+
+    setLocationContext(context);
+    setSelectedLocation({
+      name: '当前位置',
+      lat,
+      lng,
+    });
+    setSearchLocation('当前位置');
+    setSearchResults([]);
+
+    return {
+      locationName: '当前位置',
+      locationContextText: context,
+    };
+  };
+
+  const resolveCurrentContext = async (): Promise<{ locationName: string; locationContextText: string }> => {
+    if (selectedLocation) {
+      return {
+        locationName: selectedLocation.name,
+        locationContextText: locationContext,
+      };
+    }
+
+    if (searchLocation.trim()) {
+      return {
+        locationName: searchLocation.trim(),
+        locationContextText: locationContext,
+      };
+    }
+
+    try {
+      return await resolveBrowserLocation();
+    } catch (error) {
+      console.error('Get current geolocation error:', error);
+    }
+
+    return {
+      locationName: '当前位置',
+      locationContextText: locationContext,
+    };
+  };
 
   const handleSearchLocation = (query: string) => {
     setSearchLocation(query);
+    setSelectedLocation(null);
+
+    if (searchTimeoutRef.current) {
+      window.clearTimeout(searchTimeoutRef.current);
+    }
+
     if (!query.trim()) {
       setSearchResults([]);
       return;
     }
-    
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
+
+    searchTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        const data = await searchLocations(query);
+        setSearchResults(data);
+      } catch (error) {
+        console.error('Search location error:', error);
+      }
+    }, 400);
+  };
+
+  const handleSubmitSearch = async () => {
+    const keyword = searchLocation.trim();
+    if (!keyword) {
+      return;
     }
 
-    searchTimeoutRef.current = setTimeout(async () => {
-      setIsSearching(true);
-      try {
-        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=zh-CN`);
-        const data = await response.json();
-        setSearchResults(data.map((item: any) => ({
-          name: item.display_name,
-          lat: parseFloat(item.lat),
-          lng: parseFloat(item.lon)
-        })));
-      } catch (error) {
-        console.error("Error searching location:", error);
+    setIsGenerating(true);
+    try {
+      const results = await searchLocations(keyword);
+      setSearchResults(results);
+      if (results.length > 0) {
+        await handleSelectLocation(results[0]);
+      } else {
+        alert('没有找到匹配的地点，请换个关键词试试。');
       }
-      setIsSearching(false);
-    }, 500);
-  };
-
-  const handleSelectLocation = async (loc: {name: string, lat: number, lng: number}) => {
-    setSelectedLocation(loc);
-    setSearchLocation(loc.name);
-    setSearchResults([]);
-    setIsGenerating(true);
-    const context = await getLocationContext(loc.lat, loc.lng);
-    setLocationContext(context);
-    setIsGenerating(false);
-  };
-
-  const handleRandomTheme = async () => {
-    setIsGenerating(true);
-    // Get location context if possible
-    let context = locationContext;
-    let locName = searchLocation || '当前位置';
-    if (navigator.geolocation && !searchLocation) {
-      navigator.geolocation.getCurrentPosition(async (pos) => {
-        const newContext = await getLocationContext(pos.coords.latitude, pos.coords.longitude);
-        setLocationContext(newContext);
-        const categories = ['形状', '色彩', '声音', '质感', '气味'];
-        const randomCat = categories[Math.floor(Math.random() * categories.length)];
-        const theme = await generateDynamicPreset(randomCat, locName, newContext, walkMode);
-        setCurrentTheme(theme);
-        resetWalk();
-        setIsGenerating(false);
-      });
-    } else {
-      const categories = ['形状', '色彩', '声音', '质感', '气味'];
-      const randomCat = categories[Math.floor(Math.random() * categories.length)];
-      const theme = await generateDynamicPreset(randomCat, locName, context, walkMode);
-      setCurrentTheme(theme);
-      resetWalk();
+    } catch (error) {
+      console.error('Submit search error:', error);
+      alert('地点搜索失败，请稍后重试。');
+    } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleAITheme = async () => {
+  const handleSelectLocation = async (location: SearchLocation) => {
+    setSelectedLocation(location);
+    setSearchLocation(location.name);
+    setSearchResults([]);
     setIsGenerating(true);
-    let context = locationContext;
-    let locName = searchLocation || '当前位置';
-    if (navigator.geolocation && !searchLocation) {
-      navigator.geolocation.getCurrentPosition(async (pos) => {
-        const newContext = await getLocationContext(pos.coords.latitude, pos.coords.longitude);
-        setLocationContext(newContext);
-        const theme = await generateAITheme(mood, weather, season, preference, locName, newContext, walkMode);
-        setCurrentTheme(theme);
-        resetWalk();
-        setHistory(prev => [theme, ...prev].slice(0, 10));
-        setIsGenerating(false);
-      }, async () => {
-        const theme = await generateAITheme(mood, weather, season, preference, locName, context, walkMode);
-        setCurrentTheme(theme);
-        resetWalk();
-        setHistory(prev => [theme, ...prev].slice(0, 10));
-        setIsGenerating(false);
-      });
-    } else {
-      const theme = await generateAITheme(mood, weather, season, preference, locName, context, walkMode);
-      setCurrentTheme(theme);
-      resetWalk();
-      setHistory(prev => [theme, ...prev].slice(0, 10));
+    try {
+      const context = await getLocationContext(location.lat, location.lng);
+      setLocationContext(context);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleUseCurrentLocation = async () => {
+    setIsGenerating(true);
+    try {
+      await resolveBrowserLocation();
+    } catch (error) {
+      console.error('Use current location error:', error);
+      alert('获取当前位置失败，请检查浏览器定位权限。');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleSelectMapPoint = async (lat: number, lng: number) => {
+    setIsGenerating(true);
+    try {
+      const context = await getLocationContext(lat, lng);
+      const locationName = `地图选点 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+      setSelectedLocation({ name: locationName, lat, lng });
+      setSearchLocation(locationName);
+      setSearchResults([]);
+      setLocationContext(context);
+    } catch (error) {
+      console.error('Select map point error:', error);
+      alert('地图选点失败，请稍后重试。');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleGenerateRandomTheme = async () => {
+    setIsGenerating(true);
+    try {
+      const { locationName, locationContextText } = await resolveCurrentContext();
+      const category = RANDOM_CATEGORIES[Math.floor(Math.random() * RANDOM_CATEGORIES.length)];
+      const theme = await generateDynamicPreset(category, locationName, locationContextText, walkMode);
+      pushThemeHistory(theme);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleGenerateAiTheme = async () => {
+    setIsGenerating(true);
+    try {
+      const { locationName, locationContextText } = await resolveCurrentContext();
+      const theme = await generateAITheme(
+        mood,
+        weather,
+        season,
+        preference,
+        locationName,
+        locationContextText,
+        walkMode,
+      );
+      pushThemeHistory(theme);
+    } finally {
       setIsGenerating(false);
     }
   };
 
   const handleCombineThemes = async () => {
-    if (selectedThemesForCombine.length < 2) return;
+    if (selectedThemesForCombine.length < 2) {
+      alert('请至少选择两个主题方向。');
+      return;
+    }
+
     setIsGenerating(true);
-    setShowCombineModal(false);
-    let locName = searchLocation || '当前位置';
-    const theme = await generateCombinedTheme(selectedThemesForCombine, locName, locationContext, walkMode);
-    setCurrentTheme(theme);
-    resetWalk();
-    setIsGenerating(false);
-    setSelectedThemesForCombine([]);
-  };
-
-  const resetWalk = () => {
-    setCompletedMissions({});
-    setMissionMedia({});
-    setActiveMission(null);
-    setPath([]);
-    setIsTracking(false);
-    setCapturedPhoto(null);
-    setCapturedVideo(null);
-    setCapturedAudio(null);
-    setNoteText('');
-  };
-
-  const toggleMission = (mission: string) => {
-    setActiveMission(mission);
-  };
-
-  const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-    } catch (err) {
-      console.error("Camera error:", err);
-    }
-  };
-
-  const takePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const context = canvasRef.current.getContext('2d');
-      if (context) {
-        canvasRef.current.width = videoRef.current.videoWidth;
-        canvasRef.current.height = videoRef.current.videoHeight;
-        context.drawImage(videoRef.current, 0, 0);
-        const dataUrl = canvasRef.current.toDataURL('image/jpeg');
-        if (activeMission) {
-          setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'photo', data: dataUrl } }));
-          setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-          setActiveMission(null);
-        } else {
-          setCapturedPhoto(dataUrl);
-        }
-        stopMediaStream();
-      }
-    }
-  };
-
-  const stopMediaStream = () => {
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-    }
-  };
-
-  const startVideoRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      videoChunksRef.current = [];
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) videoChunksRef.current.push(e.data);
-      };
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const dataUrl = reader.result as string;
-          if (activeMission) {
-            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'video', data: dataUrl } }));
-            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-            setActiveMission(null);
-          } else {
-            setCapturedVideo(dataUrl);
-          }
-        };
-        reader.readAsDataURL(blob);
-        stopMediaStream();
-      };
-      mediaRecorder.start();
-      setIsRecordingVideo(true);
-    } catch (err) {
-      console.error("Video recording error:", err);
-    }
-  };
-
-  const stopVideoRecording = () => {
-    if (mediaRecorderRef.current && isRecordingVideo) {
-      mediaRecorderRef.current.stop();
-      setIsRecordingVideo(false);
-    }
-  };
-
-  const startAudioRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const dataUrl = reader.result as string;
-          if (activeMission) {
-            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'audio', data: dataUrl } }));
-            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-            setActiveMission(null);
-          } else {
-            setCapturedAudio(dataUrl);
-          }
-        };
-        reader.readAsDataURL(blob);
-        stream.getTracks().forEach(t => t.stop());
-      };
-      mediaRecorder.start();
-      setIsRecordingAudio(true);
-    } catch (err) {
-      console.error("Audio recording error:", err);
-    }
-  };
-
-  const stopAudioRecording = () => {
-    if (mediaRecorderRef.current && isRecordingAudio) {
-      mediaRecorderRef.current.stop();
-      setIsRecordingAudio(false);
-    }
-  };
-
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) {
-          const dataUrl = ev.target.result as string;
-          if (activeMission) {
-            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'photo', data: dataUrl } }));
-            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-            setActiveMission(null);
-          } else {
-            setCapturedPhoto(dataUrl);
-          }
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) {
-          const dataUrl = ev.target.result as string;
-          if (activeMission) {
-            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'video', data: dataUrl } }));
-            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-            setActiveMission(null);
-          } else {
-            setCapturedVideo(dataUrl);
-          }
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) {
-          const dataUrl = ev.target.result as string;
-          if (activeMission) {
-            setMissionMedia(prev => ({ ...prev, [activeMission]: { type: 'audio', data: dataUrl } }));
-            setCompletedMissions(prev => ({ ...prev, [activeMission]: true }));
-            setActiveMission(null);
-          } else {
-            setCapturedAudio(dataUrl);
-          }
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const generateNineGridImage = async () => {
-    if (!currentTheme) return null;
-    const canvas = document.createElement('canvas');
-    canvas.width = 1080;
-    canvas.height = 1080;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    ctx.fillStyle = currentTheme.vibeColor || '#ffffff';
-    ctx.fillRect(0, 0, 1080, 1080);
-
-    const photos: string[] = [];
-    if (capturedPhoto) photos.push(capturedPhoto);
-    Object.values(missionMedia).forEach(media => {
-      if (media.type === 'photo') photos.push(media.data);
-    });
-
-    const padding = 40;
-    const gap = 20;
-    const size = (1080 - padding * 2 - gap * 2) / 3;
-
-    for (let i = 0; i < 9; i++) {
-      const row = Math.floor(i / 3);
-      const col = i % 3;
-      const x = padding + col * (size + gap);
-      const y = padding + row * (size + gap);
-
-      if (i === 4) {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(x, y, size, size);
-        ctx.fillStyle = '#000000';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.font = 'bold 36px sans-serif';
-        
-        const title = currentTheme.title || 'City Walk';
-        ctx.fillText(title, x + size/2, y + size/2 - 40, size - 40);
-        
-        ctx.font = '24px sans-serif';
-        ctx.fillText(new Date().toLocaleDateString(), x + size/2, y + size/2 + 20);
-        
-        ctx.font = '20px sans-serif';
-        ctx.fillText(locationContext || '城市漫步', x + size/2, y + size/2 + 60, size - 40);
-      } else {
-        const photoIndex = i > 4 ? i - 1 : i;
-        if (photoIndex < photos.length) {
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.src = photos[photoIndex];
-          await new Promise(resolve => {
-            img.onload = () => {
-              const scale = Math.max(size / img.width, size / img.height);
-              const w = img.width * scale;
-              const h = img.height * scale;
-              const dx = x + (size - w) / 2;
-              const dy = y + (size - h) / 2;
-              
-              ctx.save();
-              ctx.beginPath();
-              ctx.rect(x, y, size, size);
-              ctx.clip();
-              ctx.drawImage(img, dx, dy, w, h);
-              ctx.restore();
-              resolve(null);
-            };
-            img.onerror = () => resolve(null);
-          });
-        } else {
-          ctx.fillStyle = 'rgba(255,255,255,0.2)';
-          ctx.fillRect(x, y, size, size);
-        }
-      }
-    }
-
-    return canvas.toDataURL('image/jpeg', 0.9);
-  };
-
-  const saveWalk = async () => {
-    if (!user || !currentTheme) return;
-    setIsUploading(true);
-    try {
-      let photoUrl = '';
-      let videoUrl = '';
-      let audioUrl = '';
-
-      if (capturedPhoto) {
-        const storageRef = ref(storage, `walks/${user.uid}/${Date.now()}_photo.jpg`);
-        await uploadString(storageRef, capturedPhoto, 'data_url');
-        photoUrl = await getDownloadURL(storageRef);
-      }
-
-      if (capturedVideo) {
-        const storageRef = ref(storage, `walks/${user.uid}/${Date.now()}_video.webm`);
-        await uploadString(storageRef, capturedVideo, 'data_url');
-        videoUrl = await getDownloadURL(storageRef);
-      }
-
-      if (capturedAudio) {
-        const storageRef = ref(storage, `walks/${user.uid}/${Date.now()}_audio.webm`);
-        await uploadString(storageRef, capturedAudio, 'data_url');
-        audioUrl = await getDownloadURL(storageRef);
-      }
-
-      const uploadedMissions = await Promise.all(
-        Object.entries(missionMedia).map(async ([mission, media]: [string, any]) => {
-          const storageRef = ref(storage, `walks/${user.uid}/${Date.now()}_mission_${Math.random().toString(36).substring(7)}.${media.type === 'photo' ? 'jpg' : 'webm'}`);
-          await uploadString(storageRef, media.data, 'data_url');
-          const url = await getDownloadURL(storageRef);
-          return { mission, mediaUrl: url, mediaType: media.type };
-        })
-      );
-
-      await addDoc(collection(db, 'walks'), {
-        userId: user.uid,
-        themeTitle: currentTheme.title,
-        photoUrl,
-        videoUrl,
-        audioUrl,
-        noteText,
-        recordUnit,
-        isPublic,
-        locationName: locationContext,
-        path,
-        completedMissions: uploadedMissions,
-        timestamp: serverTimestamp()
-      });
-      
-      const nineGrid = await generateNineGridImage();
-      if (nineGrid) {
-        setNineGridImage(nineGrid);
-      } else {
-        alert("漫步记录已保存到您的足迹！");
-      }
-      resetWalk();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'walks');
+      const { locationName, locationContextText } = await resolveCurrentContext();
+      const theme = await generateCombinedTheme(selectedThemesForCombine, locationName, locationContextText, walkMode);
+      pushThemeHistory(theme);
+      setSelectedThemesForCombine([]);
     } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const shareTheme = () => {
-    if (!currentTheme) return;
-    const text = `我正在进行一场 City Walk：${currentTheme.title}！快来加入我：${window.location.href}`;
-    if (navigator.share) {
-      navigator.share({ title: '城市漫步者', text, url: window.location.href });
-    } else {
-      navigator.clipboard.writeText(text);
-      alert("链接已复制到剪贴板！");
+      setIsGenerating(false);
     }
   };
 
   const handleSignIn = async () => {
     try {
-      await signIn();
-    } catch (error: any) {
-      if (error.code === 'auth/popup-blocked') {
-        alert("登录窗口被浏览器拦截。请允许此网站的弹出窗口并重试。");
-      } else if (error.code === 'auth/cancelled-popup-request') {
-        // User closed the popup, no need to alert
-      } else {
-        console.error("Auth error:", error);
-        alert("登录时发生错误。请重试。");
-      }
+      await redirectToWechatLogin();
+    } catch (error) {
+      console.error('Auth error:', error);
+      alert('登录失败，请稍后重试。');
     }
   };
 
-  const weatherIcons = {
-    '晴朗': <Sun className="w-4 h-4" />,
-    '多云': <Cloud className="w-4 h-4" />,
-    '雨天': <CloudRain className="w-4 h-4" />,
-    '大风': <Wind className="w-4 h-4" />
+  const handleSignOut = async () => {
+    try {
+      await logoutFromServer();
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      setUser(null);
+    }
+  };
+
+  const handleSaveWalk = async () => {
+    if (!user) {
+      alert('请先登录后再保存记录。');
+      return;
+    }
+
+    if (!currentTheme) {
+      alert('请先生成一个主题。');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await createWalk({
+        themeTitle: currentTheme.title,
+        themeCategory: currentTheme.category,
+        locationName: currentLocationName,
+        recordUnit: 'location',
+        isPublic,
+        noteText,
+        path,
+        completedMissions: [],
+      });
+      alert('漫步记录已保存。');
+      setNoteText('');
+      setPath([]);
+      setIsTracking(false);
+    } catch (error) {
+      console.error('Save walk error:', error);
+      alert('保存漫步记录失败，请稍后重试。');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSubmitTheme = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const title = String(formData.get('title') || '').trim();
+    const description = String(formData.get('description') || '').trim();
+    const category = String(formData.get('category') || '').trim();
+    const missions = ['m1', 'm2', 'm3']
+      .map((key) => String(formData.get(key) || '').trim())
+      .filter(Boolean);
+
+    try {
+      await submitTheme({ title, description, category, missions });
+      alert('主题已提交，等待审核。');
+      setShowCreateTheme(false);
+    } catch (error) {
+      console.error('Submit theme error:', error);
+      alert('提交主题失败，请稍后重试。');
+    }
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center p-6 md:p-12 max-w-4xl mx-auto">
-      {/* Header */}
-      <header className="w-full flex justify-between items-center mb-8">
-        <div className="flex items-center gap-2">
-          <Compass className="w-6 h-6 text-brand-500" />
-          <h1 className="serif text-2xl font-semibold tracking-tight hidden sm:block">城市漫步者</h1>
-        </div>
-        
-        <div className="flex items-center bg-brand-100 p-1 rounded-full">
-          <button 
-            onClick={() => setActiveTab('explore')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${activeTab === 'explore' ? 'bg-white shadow-sm text-brand-900' : 'text-brand-900/60 hover:text-brand-900'}`}
-          >
-            探索
-          </button>
-          <button 
-            onClick={() => setActiveTab('community')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all flex items-center gap-1 ${activeTab === 'community' ? 'bg-white shadow-sm text-brand-900' : 'text-brand-900/60 hover:text-brand-900'}`}
-          >
-            <Users className="w-4 h-4" /> 社区
-          </button>
-        </div>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#fff7ed,white_42%,#f8fafc)] text-slate-900">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-4 py-6 md:px-8">
+        <header className="flex flex-col gap-4 rounded-[32px] border border-amber-100 bg-white/80 p-5 shadow-sm backdrop-blur md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="rounded-2xl bg-amber-100 p-3 text-amber-700">
+              <Compass className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">城市漫步者</h1>
+              <p className="text-sm text-slate-500">重新发现城市角落的 City Walk 工具</p>
+            </div>
+          </div>
 
-        <div className="flex gap-4 items-center">
-          {user ? (
-            <div className="flex items-center gap-3">
-              <img src={user.photoURL || ''} className="w-8 h-8 rounded-full border border-brand-200" alt="avatar" />
-              <button onClick={logOut} className="p-2 rounded-full hover:bg-brand-200 transition-colors" title="退出登录">
-                <LogOut className="w-5 h-5 opacity-60" />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex rounded-full bg-slate-100 p-1">
+              <button
+                onClick={() => setActiveTab('explore')}
+                className={`rounded-full px-4 py-2 text-sm ${activeTab === 'explore' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}
+              >
+                探索
+              </button>
+              <button
+                onClick={() => setActiveTab('community')}
+                className={`rounded-full px-4 py-2 text-sm ${activeTab === 'community' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}
+              >
+                <span className="inline-flex items-center gap-1">
+                  <Users className="h-4 w-4" />
+                  社区
+                </span>
               </button>
             </div>
-          ) : (
-            <button onClick={handleSignIn} className="flex items-center gap-2 px-4 py-2 bg-brand-900 text-white rounded-full text-sm font-medium">
-              <LogIn className="w-4 h-4" />
-              登录
-            </button>
-          )}
-          <button 
-            onClick={() => setShowHistory(!showHistory)}
-            className="p-2 rounded-full hover:bg-brand-200 transition-colors"
-            title="历史记录"
-          >
-            <History className="w-5 h-5 opacity-60" />
-          </button>
-        </div>
-      </header>
 
-      {/* Main Content */}
-      <main className="w-full flex-1 flex flex-col items-center gap-8">
-        
-        {activeTab === 'explore' && (
-          <>
-            {/* Controls */}
-            <div className="w-full bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 mb-4 flex flex-col md:flex-row items-center justify-between gap-4 relative z-50">
-              <div className="flex items-center gap-4 w-full md:w-auto">
-                <div className="flex items-center bg-brand-100 p-1 rounded-full">
-                  <button 
-                    onClick={() => setWalkMode('pure')}
-                    className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${walkMode === 'pure' ? 'bg-white shadow-sm text-brand-900' : 'text-brand-900/60 hover:text-brand-900'}`}
-                  >
-                    纯粹模式
-                  </button>
-                  <button 
-                    onClick={() => setWalkMode('advanced')}
-                    className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${walkMode === 'advanced' ? 'bg-white shadow-sm text-brand-900' : 'text-brand-900/60 hover:text-brand-900'}`}
-                  >
-                    进阶模式
-                  </button>
-                </div>
-                <div className="text-xs opacity-60 hidden md:block">
-                  {walkMode === 'pure' ? '自由探索，单一维度' : '复杂任务，元素组合'}
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-2 w-full md:w-auto relative">
-                <div className="relative flex-1 md:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-40" />
-                  <input 
-                    type="text" 
-                    placeholder="搜索探索区域 (默认当前位置)" 
-                    value={searchLocation}
-                    onChange={(e) => handleSearchLocation(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 bg-white rounded-full border border-brand-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2">
+                  <img
+                    src={user.avatar || 'https://placehold.co/40x40?text=U'}
+                    alt="avatar"
+                    className="h-8 w-8 rounded-full object-cover"
                   />
-                  {searchResults.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-lg border border-brand-200 overflow-hidden z-50">
-                      {searchResults.map((loc, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => handleSelectLocation(loc)}
-                          className="w-full text-left px-4 py-3 text-sm hover:bg-brand-50 border-b border-brand-100 last:border-0 truncate"
-                        >
-                          {loc.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <span className="text-sm">{user.nickname}</span>
                 </div>
+                <button onClick={handleSignOut} className="rounded-full border border-slate-200 bg-white p-3">
+                  <LogOut className="h-4 w-4" />
+                </button>
               </div>
-              {/* Location Display */}
-              <div className="flex items-center gap-2 text-sm text-brand-900/70 bg-white/50 px-4 py-2 rounded-full border border-brand-200">
-                <MapPin className="w-4 h-4 text-brand-500" />
-                <span className="truncate max-w-[200px] md:max-w-md">
-                  当前定位: {selectedLocation ? selectedLocation.name.split(',')[0] : '您的当前位置'}
-                </span>
-              </div>
-            </div>
-
-            <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div className="bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 flex flex-col gap-3">
-            <label className="text-[10px] uppercase tracking-widest font-semibold opacity-50">当前心情</label>
-            <div className="flex flex-wrap gap-2">
-              {['好奇', '平静', '活力', '怀旧'].map(m => (
-                <button
-                  key={m}
-                  onClick={() => setMood(m)}
-                  className={`px-3 py-1.5 rounded-full text-xs transition-all ${mood === m ? 'bg-brand-500 text-white' : 'bg-brand-200/50 hover:bg-brand-200'}`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 flex flex-col gap-3">
-            <label className="text-[10px] uppercase tracking-widest font-semibold opacity-50">天气环境</label>
-            <div className="flex flex-wrap gap-2">
-              {(Object.keys(weatherIcons) as Array<keyof typeof weatherIcons>).map(w => (
-                <button
-                  key={w}
-                  onClick={() => setWeather(w)}
-                  className={`px-3 py-1.5 rounded-full text-xs flex items-center gap-2 transition-all ${weather === w ? 'bg-brand-500 text-white' : 'bg-brand-200/50 hover:bg-brand-200'}`}
-                >
-                  {weatherIcons[w]}
-                  {w}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 flex flex-col gap-3">
-            <label className="text-[10px] uppercase tracking-widest font-semibold opacity-50">季节选择</label>
-            <div className="flex flex-wrap gap-2">
-              {['春季', '夏季', '秋季', '冬季'].map(s => (
-                <button
-                  key={s}
-                  onClick={() => setSeason(s)}
-                  className={`px-3 py-1.5 rounded-full text-xs transition-all ${season === s ? 'bg-brand-500 text-white' : 'bg-brand-200/50 hover:bg-brand-200'}`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-brand-200 flex flex-col gap-3">
-            <label className="text-[10px] uppercase tracking-widest font-semibold opacity-50">散步偏好</label>
-            <div className="flex flex-wrap gap-2">
-              {['人文历史', '自然景观', '市井生活'].map(p => (
-                <button
-                  key={p}
-                  onClick={() => setPreference(p)}
-                  className={`px-3 py-1.5 rounded-full text-xs transition-all ${preference === p ? 'bg-brand-500 text-white' : 'bg-brand-200/50 hover:bg-brand-200'}`}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Theme Card */}
-        <div className="relative w-full aspect-[4/5] md:aspect-[16/9] max-h-[500px]">
-          <AnimatePresence mode="wait">
-            {isGenerating ? (
-              <motion.div
-                key="loading"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 1.05 }}
-                className="absolute inset-0 bg-white rounded-[40px] shadow-xl flex flex-col items-center justify-center gap-4 border border-brand-200"
+            ) : (
+              <button
+                onClick={handleSignIn}
+                className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white"
               >
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                >
-                  <Compass className="w-12 h-12 text-brand-500 opacity-20" />
-                </motion.div>
-                <p className="serif italic opacity-40">正在为您规划路径...</p>
-              </motion.div>
-            ) : currentTheme && (
-              <motion.div
-                key={currentTheme.title}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="absolute inset-0 bg-white rounded-[40px] shadow-xl overflow-hidden border border-brand-200 flex flex-col md:flex-row"
-              >
-                {/* Visual Side / Map */}
-                <div 
-                  className="w-full md:w-1/2 h-48 md:h-full relative overflow-hidden flex items-center justify-center"
-                  style={{ backgroundColor: `${currentTheme.vibeColor}15` }}
-                >
-                  {(isTracking && path.length > 0) || selectedLocation ? (
-                    <MapContainer 
-                      center={isTracking && path.length > 0 ? [path[path.length-1].lat, path[path.length-1].lng] : (selectedLocation ? [selectedLocation.lat, selectedLocation.lng] : [31.2304, 121.4737])} 
-                      zoom={15} 
-                      className="w-full h-full z-0"
-                      zoomControl={false}
+                <LogIn className="h-4 w-4" />
+                游客登录
+              </button>
+            )}
+          </div>
+        </header>
+
+        {activeTab === 'explore' ? (
+          <main className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+            <section className="space-y-6">
+              <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-wrap gap-3">
+                    <div className="flex rounded-full bg-slate-100 p-1">
+                      <button
+                        onClick={() => setWalkMode('pure')}
+                        className={`rounded-full px-4 py-2 text-sm ${walkMode === 'pure' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}
+                      >
+                        纯净模式
+                      </button>
+                      <button
+                        onClick={() => setWalkMode('advanced')}
+                        className={`rounded-full px-4 py-2 text-sm ${walkMode === 'advanced' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}
+                      >
+                        进阶模式
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => setShowCreateTheme((prev) => !prev)}
+                      className="rounded-full border border-slate-200 px-4 py-2 text-sm"
                     >
-                      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                      <MapUpdater center={isTracking && path.length > 0 ? [path[path.length-1].lat, path[path.length-1].lng] : (selectedLocation ? [selectedLocation.lat, selectedLocation.lng] : [31.2304, 121.4737])} />
-                      
-                      {isTracking && path.length > 0 && (
-                        <>
-                          <Polyline positions={path.map(p => [p.lat, p.lng])} color={currentTheme.vibeColor} />
-                          <Marker position={[path[path.length-1].lat, path[path.length-1].lng]}>
-                            <Popup>您的当前位置</Popup>
-                          </Marker>
-                        </>
-                      )}
-
-                      {selectedLocation && !isTracking && (
-                        <Marker position={[selectedLocation.lat, selectedLocation.lng]}>
-                          <Popup>{selectedLocation.name}</Popup>
-                        </Marker>
-                      )}
-                    </MapContainer>
-                  ) : (
-                    <>
-                      <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, currentColor 1px, transparent 0)', backgroundSize: '24px 24px', color: currentTheme.vibeColor }}></div>
-                      <motion.div 
-                        initial={{ scale: 0.8, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{ delay: 0.2 }}
-                        className="serif text-8xl md:text-[12rem] font-bold opacity-10 select-none"
-                        style={{ color: currentTheme.vibeColor }}
-                      >
-                        {currentTheme.category[0]}
-                      </motion.div>
-                    </>
-                  )}
-                  
-                  <div className="absolute bottom-6 left-6 z-10 flex items-center gap-2 px-3 py-1.5 bg-white/80 backdrop-blur-md rounded-full border border-brand-200">
-                    <MapPin className="w-3 h-3 text-brand-500" />
-                    <span className="text-[10px] uppercase tracking-widest font-bold">{currentTheme.category} 漫步</span>
+                      提交自定义主题
+                    </button>
+                    <button
+                      onClick={handleUseCurrentLocation}
+                      className="rounded-full border border-slate-200 px-4 py-2 text-sm"
+                    >
+                      使用当前定位
+                    </button>
                   </div>
-                  
-                  {/* Map Footprint Indicator */}
-                  {isTracking && (
-                    <div className="absolute top-6 left-6 z-10 flex items-center gap-2 px-3 py-1.5 bg-brand-500 text-white rounded-full text-[10px] font-bold animate-pulse">
-                      <Navigation className="w-3 h-3" />
-                      追踪中...
-                    </div>
-                  )}
+
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      value={searchLocation}
+                      onChange={(event) => handleSearchLocation(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void handleSubmitSearch();
+                        }
+                      }}
+                      placeholder="搜索地点，例如：上海武康路"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 outline-none ring-0"
+                    />
+                    {searchResults.length > 0 && (
+                      <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
+                        {searchResults.map((location) => (
+                          <button
+                            key={`${location.lat}-${location.lng}`}
+                            onClick={() => handleSelectLocation(location)}
+                            className="block w-full border-b border-slate-100 px-4 py-3 text-left text-sm hover:bg-slate-50 last:border-b-0"
+                          >
+                            {location.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => void handleSubmitSearch()}
+                      className="rounded-full border border-slate-200 px-4 py-2 text-sm"
+                    >
+                      搜索并定位
+                    </button>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <InfoSelect label="当前心情" value={mood} onChange={setMood} options={['好奇', '平静', '活力', '怀旧']} />
+                    <InfoSelect label="天气" value={weather} onChange={setWeather} options={['晴朗', '多云', '雨天', '大风']} />
+                    <InfoSelect label="季节" value={season} onChange={setSeason} options={['春季', '夏季', '秋季', '冬季']} />
+                    <InfoSelect label="偏好" value={preference} onChange={setPreference} options={['城市生活', '街区观察', '自然角落', '建筑细节']} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                  <div>
+                    <h2 className="text-lg font-semibold">地图与路线</h2>
+                    <p className="text-sm text-slate-500">查看当前地点和漫步轨迹</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                    <div className="rounded-full bg-slate-100 px-3 py-1">轨迹点 {path.length}</div>
+                    <div className="rounded-full bg-slate-100 px-3 py-1">距离 {pathDistanceKm.toFixed(2)} km</div>
+                    <div className="rounded-full bg-slate-100 px-3 py-1">POI {nearbyPois.length}</div>
+                  </div>
                 </div>
 
-                {/* Content Side */}
-                <div className="flex-1 p-8 md:p-12 flex flex-col justify-between overflow-y-auto">
-                  <div>
-                    <div className="flex justify-between items-start mb-4">
-                      <h2 className="serif text-3xl md:text-4xl font-bold leading-tight">{currentTheme.title}</h2>
-                      <button onClick={shareTheme} className="p-2 hover:bg-brand-100 rounded-full transition-colors">
-                        <Share2 className="w-5 h-5 opacity-40" />
-                      </button>
+                <div className="h-[360px]">
+                  <MapContainer center={mapCenter} zoom={13} className="h-full w-full">
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    <MapViewUpdater center={mapCenter} />
+                    <MapClickSelector onSelect={(lat, lng) => void handleSelectMapPoint(lat, lng)} />
+                    {selectedLocation && (
+                      <Marker position={[selectedLocation.lat, selectedLocation.lng]}>
+                        <Popup>{selectedLocation.name}</Popup>
+                      </Marker>
+                    )}
+                    {!selectedLocation && pathCoordinates.length > 0 && (
+                      <Marker position={pathCoordinates[pathCoordinates.length - 1]}>
+                        <Popup>当前轨迹位置</Popup>
+                      </Marker>
+                    )}
+                    {nearbyPois
+                      .filter((poi) => typeof poi.lat === 'number' && typeof poi.lng === 'number')
+                      .map((poi, index) => (
+                        <Marker key={`${poi.title}-${index}`} position={[poi.lat as number, poi.lng as number]}>
+                          <Popup>
+                            <div className="space-y-1">
+                              <div className="font-medium">{poi.title}</div>
+                              <a href={poi.uri} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">
+                                查看地图链接
+                              </a>
+                            </div>
+                          </Popup>
+                        </Marker>
+                      ))}
+                    {pathCoordinates.length > 1 && <Polyline positions={pathCoordinates} pathOptions={{ color: '#f59e0b', weight: 5 }} />}
+                  </MapContainer>
+                </div>
+
+                <div className="border-t border-slate-100 px-5 py-4">
+                  <div className="mb-4 flex flex-wrap gap-3">
+                    <button
+                      onClick={handleUseCurrentLocation}
+                      className="rounded-full border border-slate-200 px-4 py-2 text-sm"
+                    >
+                      定位到当前位置
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPath([]);
+                        setIsTracking(false);
+                      }}
+                      className="rounded-full border border-slate-200 px-4 py-2 text-sm"
+                    >
+                      清空轨迹
+                    </button>
+                    <div className="rounded-full bg-amber-50 px-4 py-2 text-sm text-amber-900">
+                      点击地图也可以直接选点
                     </div>
-                    <p className="text-brand-900/60 leading-relaxed mb-8">{currentTheme.description}</p>
-                    
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center mb-2">
-                        <label className="text-[10px] uppercase tracking-widest font-semibold opacity-50 block">您的任务</label>
-                        <div className="flex items-center gap-2 bg-brand-100 p-1 rounded-lg">
-                          <span className="text-[8px] font-bold opacity-40 px-1">记录单位:</span>
-                          {(['location', 'event', 'image'] as const).map(unit => (
-                            <button
-                              key={unit}
-                              onClick={() => setRecordUnit(unit)}
-                              className={`text-[8px] px-1.5 py-0.5 rounded transition-all ${recordUnit === unit ? 'bg-brand-500 text-white' : 'opacity-40'}`}
-                            >
-                              {unit === 'location' ? '地点' : unit === 'event' ? '事件' : '图片'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      {currentTheme.missions.map((mission, idx) => (
-                        <div key={idx} className="flex flex-col gap-2">
-                          <button
-                            onClick={() => toggleMission(mission)}
-                            className={`w-full flex items-center gap-3 p-3 rounded-2xl transition-colors text-left group ${activeMission === mission ? 'bg-brand-200' : 'hover:bg-brand-100'}`}
-                          >
-                            {completedMissions[mission] ? (
-                              <CheckCircle2 className="w-5 h-5 text-brand-500" />
-                            ) : (
-                              <Circle className="w-5 h-5 opacity-20 group-hover:opacity-40" />
-                            )}
-                            <span className={`text-sm flex-1 ${completedMissions[mission] ? 'line-through opacity-40' : ''}`}>
-                              {mission}
-                            </span>
-                            {missionMedia[mission] && (
-                              <div className="w-6 h-6 bg-brand-500 rounded-full flex items-center justify-center">
-                                {missionMedia[mission].type === 'photo' ? <ImageIcon className="w-3 h-3 text-white" /> : 
-                                 missionMedia[mission].type === 'video' ? <Video className="w-3 h-3 text-white" /> : 
-                                 <Mic className="w-3 h-3 text-white" />}
-                              </div>
-                            )}
-                          </button>
-                          
-                          {/* Active Mission Media Capture Area */}
-                          <AnimatePresence>
-                            {activeMission === mission && !completedMissions[mission] && (
-                              <motion.div 
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                exit={{ opacity: 0, height: 0 }}
-                                className="pl-11 pr-3 overflow-hidden"
-                              >
-                                <div className="p-3 bg-brand-50 rounded-xl border border-brand-200 flex flex-col gap-2">
-                                  <span className="text-[10px] font-bold opacity-50 uppercase">打卡此任务</span>
-                                  <div className="flex gap-2">
-                                    <button onClick={startCamera} className="flex-1 py-2 bg-white rounded-lg border border-brand-200 flex items-center justify-center gap-2 hover:bg-brand-100">
-                                      <Camera className="w-4 h-4 opacity-60" /> <span className="text-xs">拍照</span>
-                                    </button>
-                                    <button onClick={isRecordingVideo ? stopVideoRecording : startVideoRecording} className={`flex-1 py-2 rounded-lg border flex items-center justify-center gap-2 ${isRecordingVideo ? 'bg-red-500 text-white border-red-500' : 'bg-white border-brand-200 hover:bg-brand-100'}`}>
-                                      {isRecordingVideo ? <StopCircle className="w-4 h-4" /> : <Video className="w-4 h-4 opacity-60" />} 
-                                      <span className="text-xs">{isRecordingVideo ? '停止' : '录像'}</span>
-                                    </button>
-                                    <button onClick={isRecordingAudio ? stopAudioRecording : startAudioRecording} className={`flex-1 py-2 rounded-lg border flex items-center justify-center gap-2 ${isRecordingAudio ? 'bg-red-500 text-white border-red-500' : 'bg-white border-brand-200 hover:bg-brand-100'}`}>
-                                      {isRecordingAudio ? <StopCircle className="w-4 h-4" /> : <Mic className="w-4 h-4 opacity-60" />} 
-                                      <span className="text-xs">{isRecordingAudio ? '停止' : '录音'}</span>
-                                    </button>
-                                  </div>
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
+                  </div>
+
+                  <h3 className="text-sm font-medium text-slate-700">附近可逛点</h3>
+                  {nearbyPois.length === 0 ? (
+                    <p className="mt-2 text-sm text-slate-500">选择地点后，这里会显示附近推荐点位。</p>
+                  ) : (
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      {nearbyPois.map((poi, index) => (
+                        <a
+                          key={`${poi.title}-${index}`}
+                          href={poi.uri}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm hover:bg-slate-100"
+                        >
+                          <div className="font-medium text-slate-800">{poi.title}</div>
+                          <div className="mt-1 text-xs text-slate-500">查看地图链接</div>
+                        </a>
                       ))}
                     </div>
-
-                    {/* Completed Missions Record Area */}
-                    {Object.values(completedMissions).some(v => v) && (
-                      <div className="mt-6 p-4 bg-brand-50 rounded-2xl border border-dashed border-brand-300">
-                        <label className="text-[10px] uppercase tracking-widest font-semibold opacity-50 block mb-2">任务记录区</label>
-                        <div className="space-y-3">
-                          {Object.keys(completedMissions).filter(m => completedMissions[m]).map((m, i) => (
-                            <div key={i} className="flex flex-col gap-2 text-xs opacity-80 bg-white p-2 rounded-lg border border-brand-100">
-                              <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 bg-brand-500 rounded-full" />
-                                <span className="font-medium">{m}</span>
-                              </div>
-                              {missionMedia[m] && (
-                                <div className="pl-3.5">
-                                  {missionMedia[m].type === 'photo' && <img src={missionMedia[m].data} className="w-16 h-16 object-cover rounded-md" alt="mission" />}
-                                  {missionMedia[m].type === 'video' && <video src={missionMedia[m].data} className="w-16 h-16 object-cover rounded-md" />}
-                                  {missionMedia[m].type === 'audio' && <audio src={missionMedia[m].data} controls className="h-6 w-full max-w-[200px]" />}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-8 flex flex-col gap-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="flex flex-col gap-2">
-                        <button 
-                          onClick={() => {
-                            if (capturedPhoto) setCapturedPhoto(null);
-                            else startCamera();
-                          }}
-                          className="flex items-center justify-center gap-2 py-2.5 bg-brand-900 text-white rounded-2xl hover:bg-brand-900/90 transition-all"
-                        >
-                          <Camera className="w-4 h-4" />
-                          <span className="text-xs font-medium">{capturedPhoto ? '重拍照片' : '随手拍'}</span>
-                        </button>
-                        <label className="flex items-center justify-center gap-2 py-2.5 bg-brand-100 text-brand-900 rounded-2xl hover:bg-brand-200 transition-all cursor-pointer">
-                          <Upload className="w-4 h-4" />
-                          <span className="text-xs font-medium">上传照片</span>
-                          <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
-                        </label>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <button 
-                          onClick={() => {
-                            if (capturedVideo) setCapturedVideo(null);
-                            else if (isRecordingVideo) stopVideoRecording();
-                            else startVideoRecording();
-                          }}
-                          className={`flex items-center justify-center gap-2 py-2.5 rounded-2xl transition-all ${isRecordingVideo ? 'bg-red-500 text-white' : 'bg-brand-900 text-white'}`}
-                        >
-                          {isRecordingVideo ? <StopCircle className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-                          <span className="text-xs font-medium">
-                            {capturedVideo ? '重录视频' : (isRecordingVideo ? '停止录制' : '录像')}
-                          </span>
-                        </button>
-                        <label className="flex items-center justify-center gap-2 py-2.5 bg-brand-100 text-brand-900 rounded-2xl hover:bg-brand-200 transition-all cursor-pointer">
-                          <Upload className="w-4 h-4" />
-                          <span className="text-xs font-medium">上传视频</span>
-                          <input type="file" accept="video/*" className="hidden" onChange={handleVideoUpload} />
-                        </label>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <button 
-                          onClick={() => {
-                            if (capturedAudio) setCapturedAudio(null);
-                            else if (isRecordingAudio) stopAudioRecording();
-                            else startAudioRecording();
-                          }}
-                          className={`flex items-center justify-center gap-2 py-2.5 rounded-2xl transition-all ${isRecordingAudio ? 'bg-red-500 text-white' : 'bg-brand-900 text-white'}`}
-                        >
-                          {isRecordingAudio ? <StopCircle className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                          <span className="text-xs font-medium">
-                            {capturedAudio ? '重录音频' : (isRecordingAudio ? '停止录音' : '录音')}
-                          </span>
-                        </button>
-                        <label className="flex items-center justify-center gap-2 py-2.5 bg-brand-100 text-brand-900 rounded-2xl hover:bg-brand-200 transition-all cursor-pointer">
-                          <Upload className="w-4 h-4" />
-                          <span className="text-xs font-medium">上传录音</span>
-                          <input type="file" accept="audio/*" className="hidden" onChange={handleAudioUpload} />
-                        </label>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <button 
-                          onClick={() => setIsTracking(!isTracking)}
-                          className={`flex items-center justify-center gap-2 py-2.5 border rounded-2xl transition-all h-full ${isTracking ? 'bg-brand-500 text-white border-brand-500' : 'bg-white border-brand-200 text-brand-900'}`}
-                        >
-                          <Navigation className="w-4 h-4" />
-                          <span className="text-xs font-medium">{isTracking ? '停止追踪' : '开启地图'}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="relative">
-                      <FileText className="absolute left-3 top-3 w-4 h-4 opacity-30" />
-                      <textarea
-                        value={noteText}
-                        onChange={(e) => setNoteText(e.target.value)}
-                        placeholder="记录此刻的想法..."
-                        className="w-full p-3 pl-10 bg-brand-100 rounded-2xl border-none focus:ring-2 focus:ring-brand-500 text-sm h-20 resize-none"
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between px-2">
-                      <label className="flex items-center gap-2 text-sm opacity-70 cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          checked={isPublic} 
-                          onChange={(e) => setIsPublic(e.target.checked)}
-                          className="rounded text-brand-500 focus:ring-brand-500"
-                        />
-                        公开分享到社区
-                      </label>
-                    </div>
-                    
-                    {user && (path.length > 0 || capturedPhoto || capturedVideo || capturedAudio || noteText || Object.keys(missionMedia).length > 0) && (
-                      <button 
-                        onClick={saveWalk}
-                        disabled={isUploading}
-                        className="w-full flex items-center justify-center gap-2 py-3 bg-brand-500 text-white rounded-2xl hover:bg-brand-600 transition-all disabled:opacity-50"
-                      >
-                        <Save className="w-4 h-4" />
-                        <span className="text-sm font-medium">{isUploading ? '保存中...' : '保存到足迹'}</span>
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+              </div>
 
-        {/* Media Previews */}
-        <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-          {/* Camera/Video Preview */}
-          <AnimatePresence>
-            {(capturedPhoto || capturedVideo || (videoRef.current?.srcObject)) && (
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                className="bg-white p-4 rounded-3xl shadow-lg border border-brand-200 relative"
-              >
-                <button 
-                  onClick={() => {
-                    setCapturedPhoto(null);
-                    setCapturedVideo(null);
-                    stopMediaStream();
-                  }}
-                  className="absolute top-2 right-2 z-10 p-1 bg-white rounded-full shadow-md"
+              <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Current Theme</p>
+                    <h2 className="mt-1 text-2xl font-semibold">{currentTheme?.title || '等待生成主题'}</h2>
+                  </div>
+                  {isGenerating && <LoaderCircle className="h-5 w-5 animate-spin text-amber-500" />}
+                </div>
+
+                <div
+                  className="rounded-[28px] p-5 text-white"
+                  style={{ background: `linear-gradient(135deg, ${currentTheme?.vibeColor || '#334155'}, #0f172a)` }}
                 >
-                  <X className="w-4 h-4" />
-                </button>
-                
-                {capturedPhoto ? (
-                  <img src={capturedPhoto} className="w-full rounded-2xl" alt="captured" />
-                ) : capturedVideo ? (
-                  <video src={capturedVideo} className="w-full rounded-2xl" controls />
-                ) : (
-                  <div className="relative">
-                    <video ref={videoRef} className="w-full rounded-2xl bg-black" playsInline muted />
-                    {!isRecordingVideo && (
-                      <button 
-                        onClick={takePhoto}
-                        className="absolute bottom-4 left-1/2 -translate-x-1/2 w-12 h-12 bg-white rounded-full border-4 border-brand-500 flex items-center justify-center"
-                      >
-                        <div className="w-8 h-8 bg-brand-500 rounded-full" />
-                      </button>
-                    )}
-                  </div>
-                )}
-                <canvas ref={canvasRef} className="hidden" />
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Audio Preview */}
-          <AnimatePresence>
-            {(capturedAudio || isRecordingAudio) && (
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 20 }}
-                className="bg-white p-4 rounded-3xl shadow-lg border border-brand-200 flex flex-col items-center justify-center gap-3"
-              >
-                <div className="flex justify-between w-full">
-                  <span className="text-[10px] font-bold opacity-40 uppercase">音频记录</span>
-                  <button onClick={() => setCapturedAudio(null)}><Trash2 className="w-4 h-4 opacity-30" /></button>
+                  <p className="text-sm opacity-85">{currentTheme?.category || '探索'}</p>
+                  <p className="mt-3 text-lg leading-8">{currentTheme?.description || '点击按钮生成新的漫步主题。'}</p>
                 </div>
-                {isRecordingAudio ? (
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                    <span className="text-xs font-medium">录音中...</span>
+
+                <div className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <div className="inline-flex items-center gap-2">
+                    <MapPin className="h-4 w-4" />
+                    当前地点：{currentLocationName}
                   </div>
-                ) : (
-                  <audio src={capturedAudio!} controls className="w-full h-8" />
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+                  <div className="mt-1 text-slate-600">地点环境：{locationContext}</div>
+                </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-wrap justify-center gap-4 mt-4">
-          <button 
-            onClick={handleRandomTheme}
-            disabled={isGenerating}
-            className="px-6 py-4 bg-white border border-brand-200 rounded-full flex items-center gap-3 hover:bg-brand-200 transition-all disabled:opacity-50"
-          >
-            <Shuffle className="w-5 h-5 opacity-60" />
-            <span className="font-medium">随机</span>
-          </button>
-          
-          <button 
-            onClick={() => setShowCombineModal(true)}
-            disabled={isGenerating}
-            className="px-6 py-4 bg-white border border-brand-200 rounded-full flex items-center gap-3 hover:bg-brand-200 transition-all disabled:opacity-50"
-          >
-            <Layers className="w-5 h-5 opacity-60" />
-            <span className="font-medium">组合</span>
-          </button>
- 
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            disabled={isGenerating}
-            className="px-6 py-4 bg-white border border-brand-200 rounded-full flex items-center gap-3 hover:bg-brand-200 transition-all disabled:opacity-50"
-          >
-            <Plus className="w-5 h-5 opacity-60" />
-            <span className="font-medium">创建</span>
-          </button>
-          
-          <button 
-            onClick={handleAITheme}
-            disabled={isGenerating}
-            className="px-8 py-4 bg-brand-500 text-white rounded-full flex items-center gap-3 hover:bg-brand-600 transition-all shadow-lg shadow-brand-500/20 disabled:opacity-50"
-          >
-            <Sparkles className="w-5 h-5" />
-            <span className="font-medium">AI 生成</span>
-          </button>
-        </div>
-          </>
-        )}
+                <div className="mt-5 space-y-3">
+                  {(currentTheme?.missions || []).map((mission, index) => (
+                    <div key={`${mission}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                      {index + 1}. {mission}
+                    </div>
+                  ))}
+                </div>
 
-        {activeTab === 'community' && (
-          <div className="w-full max-w-4xl">
-            <h2 className="serif text-2xl font-bold mb-6">社区漫步足迹</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <button
+                    onClick={handleGenerateRandomTheme}
+                    className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+                  >
+                    <Shuffle className="h-4 w-4" />
+                    随机生成
+                  </button>
+                  <button
+                    onClick={handleGenerateAiTheme}
+                    className="inline-flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2 text-sm font-medium text-white"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    AI 生成
+                  </button>
+                  <button
+                    onClick={() => setIsTracking((prev) => !prev)}
+                    className="rounded-full border border-slate-200 px-4 py-2 text-sm"
+                  >
+                    {isTracking ? '停止轨迹记录' : '开始轨迹记录'}
+                  </button>
+                </div>
+
+                <div className="mt-6">
+                  <p className="mb-2 text-sm font-medium text-slate-600">组合主题方向</p>
+                  <div className="flex flex-wrap gap-2">
+                    {COMBINE_CATEGORIES.map((category) => {
+                      const selected = selectedThemesForCombine.includes(category);
+                      return (
+                        <button
+                          key={category}
+                          onClick={() => {
+                            setSelectedThemesForCombine((prev) => {
+                              if (prev.includes(category)) {
+                                return prev.filter((item) => item !== category);
+                              }
+                              if (prev.length >= 2) {
+                                return prev;
+                              }
+                              return [...prev, category];
+                            });
+                          }}
+                          className={`rounded-full px-4 py-2 text-sm ${selected ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white'}`}
+                        >
+                          {category}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={handleCombineThemes}
+                    className="mt-3 rounded-full border border-slate-200 px-4 py-2 text-sm"
+                  >
+                    组合生成主题
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <aside className="space-y-6">
+              <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">保存本次漫步</h3>
+                  <History className="h-5 w-5 text-slate-400" />
+                </div>
+
+                <textarea
+                  value={noteText}
+                  onChange={(event) => setNoteText(event.target.value)}
+                  placeholder="写一点这次漫步的感受"
+                  className="min-h-32 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 outline-none"
+                />
+
+                <label className="mt-4 flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" checked={isPublic} onChange={(event) => setIsPublic(event.target.checked)} />
+                  同时发布到社区
+                </label>
+
+                <div className="mt-3 text-sm text-slate-500">当前轨迹点数量：{path.length}</div>
+
+                <button
+                  onClick={handleSaveWalk}
+                  disabled={isSaving}
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
+                >
+                  {isSaving && <LoaderCircle className="h-4 w-4 animate-spin" />}
+                  保存漫步记录
+                </button>
+              </div>
+
+              <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-lg font-semibold">最近生成历史</h3>
+                <div className="mt-4 space-y-3">
+                  {history.length === 0 ? (
+                    <p className="text-sm text-slate-500">还没有生成历史。</p>
+                  ) : (
+                    history.map((theme, index) => (
+                      <button
+                        key={`${theme.title}-${index}`}
+                        onClick={() => setCurrentTheme(theme)}
+                        className="block w-full rounded-2xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50"
+                      >
+                        <div className="text-sm font-medium">{theme.title}</div>
+                        <div className="mt-1 text-xs text-slate-500">{theme.category}</div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {showCreateTheme && (
+                <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
+                  <h3 className="text-lg font-semibold">提交自定义主题</h3>
+                  {!user ? (
+                    <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-900">
+                      请先登录后再提交主题。
+                    </div>
+                  ) : (
+                    <form className="mt-4 space-y-3" onSubmit={handleSubmitTheme}>
+                      <input name="title" required placeholder="主题名称" className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
+                      <textarea name="description" required placeholder="主题描述" className="min-h-24 w-full rounded-2xl border border-slate-200 px-4 py-3" />
+                      <select name="category" className="w-full rounded-2xl border border-slate-200 px-4 py-3">
+                        <option>视觉</option>
+                        <option>感官</option>
+                        <option>城市</option>
+                        <option>自然</option>
+                      </select>
+                      <input name="m1" required placeholder="任务 1" className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
+                      <input name="m2" required placeholder="任务 2" className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
+                      <input name="m3" required placeholder="任务 3" className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
+                      <button type="submit" className="w-full rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-white">
+                        提交主题
+                      </button>
+                    </form>
+                  )}
+                </div>
+              )}
+            </aside>
+          </main>
+        ) : (
+          <main className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-semibold">社区漫步</h2>
+                <p className="text-sm text-slate-500">查看大家公开发布的漫步记录</p>
+              </div>
+              {isLoadingCommunity && <LoaderCircle className="h-5 w-5 animate-spin text-amber-500" />}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
               {communityWalks.length === 0 ? (
-                <div className="col-span-full text-center py-12 opacity-50">暂无公开的漫步记录，去探索并分享你的第一次漫步吧！</div>
+                <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">
+                  暂时还没有社区内容，等你来发布第一条记录。
+                </div>
               ) : (
                 communityWalks.map((walk) => (
-                  <div key={walk.id} className="bg-white rounded-3xl p-6 shadow-sm border border-brand-200 flex flex-col gap-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-bold text-lg">{walk.themeTitle}</h3>
-                        <p className="text-xs opacity-50 flex items-center gap-1 mt-1">
-                          <MapPin className="w-3 h-3" /> {walk.locationName || '未知地点'}
-                        </p>
-                      </div>
-                      <span className="text-[10px] px-2 py-1 bg-brand-100 rounded-full text-brand-900 font-medium">
-                        {new Date(walk.timestamp?.toDate()).toLocaleDateString()}
-                      </span>
-                    </div>
-                    
-                    {walk.noteText && (
-                      <p className="text-sm opacity-80 italic">"{walk.noteText}"</p>
+                  <article key={walk.id} className="rounded-[28px] border border-slate-200 bg-slate-50 p-5">
+                    <div className="text-xs uppercase tracking-[0.2em] text-slate-400">{walk.themeCategory || '城市'}</div>
+                    <h3 className="mt-2 text-lg font-semibold">{walk.themeTitle}</h3>
+                    <p className="mt-1 text-sm text-slate-500">{walk.locationName || '未填写地点'}</p>
+                    {walk.noteText && <p className="mt-4 text-sm leading-7 text-slate-700">{walk.noteText}</p>}
+                    {walk.photoUrl && (
+                      <img src={walk.photoUrl} alt={walk.themeTitle} className="mt-4 h-48 w-full rounded-2xl object-cover" />
                     )}
-
-                    {walk.completedMissions && walk.completedMissions.length > 0 && (
-                      <div className="bg-brand-50 p-3 rounded-xl">
-                        <span className="text-[10px] uppercase font-bold opacity-50 block mb-2">完成的任务</span>
-                        <div className="flex flex-col gap-2">
-                          {walk.completedMissions.map((m: any, i: number) => (
-                            <div key={i} className="flex items-start gap-2 text-xs">
-                              <CheckCircle2 className="w-3 h-3 text-brand-500 mt-0.5 shrink-0" />
-                              <div className="flex-1">
-                                <span>{m.mission}</span>
-                                {m.mediaUrl && (
-                                  <div className="mt-1">
-                                    {m.mediaType === 'photo' && <img src={m.mediaUrl} className="w-16 h-16 object-cover rounded-md" alt="mission" />}
-                                    {m.mediaType === 'video' && <video src={m.mediaUrl} className="w-16 h-16 object-cover rounded-md" />}
-                                    {m.mediaType === 'audio' && <audio src={m.mediaUrl} controls className="h-6 w-full max-w-[200px]" />}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {walk.photoUrl && !walk.completedMissions?.some((m: any) => m.mediaUrl === walk.photoUrl) && (
-                      <img src={walk.photoUrl} className="w-full h-48 object-cover rounded-2xl" alt="walk cover" />
-                    )}
-                  </div>
+                  </article>
                 ))
               )}
             </div>
-          </div>
+          </main>
         )}
-      </main>
- 
-      {/* Combine Modal */}
-      <AnimatePresence>
-        {showCombineModal && (
-          <div className="fixed inset-0 z-50 bg-brand-900/40 backdrop-blur-md flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white w-full max-w-lg rounded-[40px] p-8 shadow-2xl"
-            >
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="serif text-2xl font-bold">组合主题</h3>
-                <button onClick={() => setShowCombineModal(false)}><X className="w-6 h-6" /></button>
-              </div>
-              <p className="text-sm opacity-60 mb-6 text-center italic">选择 2 个主题，将它们的灵魂融合为一次独特的漫步。</p>
-              
-              <div className="grid grid-cols-2 gap-3 mb-8">
-                {['形状漫步', '色彩漫步', '声音漫步', '动物漫步', '气味漫步'].map((category, i) => {
-                  const isSelected = selectedThemesForCombine.includes(category);
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        if (isSelected) setSelectedThemesForCombine(prev => prev.filter(c => c !== category));
-                        else if (selectedThemesForCombine.length < 2) setSelectedThemesForCombine(prev => [...prev, category]);
-                      }}
-                      className={`p-4 rounded-3xl border-2 transition-all text-left ${isSelected ? 'border-brand-500 bg-brand-500/5' : 'border-brand-200 hover:border-brand-500/30'}`}
-                    >
-                      <div className="font-bold text-sm leading-tight">{category}</div>
-                    </button>
-                  );
-                })}
-              </div>
- 
-              <button 
-                onClick={handleCombineThemes}
-                disabled={selectedThemesForCombine.length < 2}
-                className="w-full py-4 bg-brand-900 text-white rounded-2xl font-bold disabled:opacity-20"
-              >
-                融合主题
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
- 
-      {/* Create Theme Modal */}
-      <AnimatePresence>
-        {showCreateModal && (
-          <div className="fixed inset-0 z-50 bg-brand-900/40 backdrop-blur-md flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white w-full max-w-lg rounded-[40px] p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
-            >
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="serif text-2xl font-bold">创建新主题</h3>
-                <button onClick={() => setShowCreateModal(false)}><X className="w-6 h-6" /></button>
-              </div>
-              
-              {!user ? (
-                <div className="text-center py-12">
-                  <p className="opacity-60 mb-6">请先登录以贡献社区。</p>
-                  <button onClick={signIn} className="px-8 py-3 bg-brand-900 text-white rounded-full font-bold">使用 Google 登录</button>
-                </div>
-              ) : (
-                <form className="space-y-6" onSubmit={async (e) => {
-                  e.preventDefault();
-                  const formData = new FormData(e.currentTarget);
-                  const title = formData.get('title') as string;
-                  const description = formData.get('description') as string;
-                  const category = formData.get('category') as string;
-                  const missions = [formData.get('m1'), formData.get('m2'), formData.get('m3')].filter(Boolean) as string[];
- 
-                  try {
-                    await addDoc(collection(db, 'themes'), {
-                      title, description, category, missions,
-                      authorId: user.uid,
-                      authorName: user.displayName,
-                      status: 'pending',
-                      createdAt: serverTimestamp()
-                    });
-                    alert("主题已提交审核！");
-                    setShowCreateModal(false);
-                  } catch (err) {
-                    handleFirestoreError(err, OperationType.CREATE, 'themes');
-                  }
-                }}>
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase font-bold opacity-40">主题名称</label>
-                    <input name="title" required className="w-full p-4 bg-brand-100 rounded-2xl border-none focus:ring-2 focus:ring-brand-500" placeholder="例如：霓虹夜行" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase font-bold opacity-40">描述</label>
-                    <textarea name="description" required className="w-full p-4 bg-brand-100 rounded-2xl border-none focus:ring-2 focus:ring-brand-500 h-24" placeholder="这次漫步的氛围是怎样的？" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase font-bold opacity-40">类别</label>
-                    <select name="category" className="w-full p-4 bg-brand-100 rounded-2xl border-none focus:ring-2 focus:ring-brand-500">
-                      <option>视觉</option>
-                      <option>感官</option>
-                      <option>互动</option>
-                      <option>城市</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase font-bold opacity-40">任务 (需要 3 个)</label>
-                    <input name="m1" required className="w-full p-3 bg-brand-100 rounded-xl mb-2" placeholder="任务 1" />
-                    <input name="m2" required className="w-full p-3 bg-brand-100 rounded-xl mb-2" placeholder="任务 2" />
-                    <input name="m3" required className="w-full p-3 bg-brand-100 rounded-xl" placeholder="任务 3" />
-                  </div>
-                  <button type="submit" className="w-full py-4 bg-brand-500 text-white rounded-2xl font-bold">提交主题</button>
-                </form>
-              )}
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
- 
-      {/* Nine Grid Modal */}
-      <AnimatePresence>
-        {nineGridImage && (
-          <div className="fixed inset-0 z-50 bg-brand-900/80 backdrop-blur-md flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white w-full max-w-md rounded-[40px] p-6 shadow-2xl flex flex-col items-center"
-            >
-              <div className="flex justify-between items-center w-full mb-4">
-                <h3 className="serif text-xl font-bold">漫步九宫格</h3>
-                <button onClick={() => {
-                  setNineGridImage(null);
-                  alert("漫步记录已保存到您的足迹！");
-                }}><X className="w-6 h-6" /></button>
-              </div>
-              <p className="text-sm opacity-60 mb-6 text-center">长按图片保存，或点击下方按钮下载</p>
-              
-              <div className="w-full aspect-square rounded-2xl overflow-hidden shadow-lg mb-6">
-                <img src={nineGridImage} alt="九宫格" className="w-full h-full object-cover" />
-              </div>
-
-              <a 
-                href={nineGridImage}
-                download={`citywalk-${Date.now()}.jpg`}
-                className="w-full py-4 bg-brand-500 text-white rounded-2xl font-bold flex items-center justify-center gap-2"
-                onClick={() => {
-                  setTimeout(() => {
-                    setNineGridImage(null);
-                    alert("漫步记录已保存到您的足迹！");
-                  }, 500);
-                }}
-              >
-                <Save className="w-5 h-5" />
-                保存图片
-              </a>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* History Overlay */}
-      <AnimatePresence>
-        {showHistory && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-brand-900/20 backdrop-blur-sm flex justify-end"
-            onClick={() => setShowHistory(false)}
-          >
-            <motion.div
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              className="w-full max-w-md bg-white h-full shadow-2xl p-8 overflow-y-auto"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex justify-between items-center mb-8">
-                <h3 className="serif text-2xl font-bold">往期漫步</h3>
-                <button onClick={() => setShowHistory(false)} className="p-2 hover:bg-brand-100 rounded-full">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              
-              <div className="space-y-6">
-                {history.length === 0 ? (
-                  <p className="opacity-40 italic">暂无历史记录。开始漫步吧！</p>
-                ) : (
-                  history.map((h, i) => (
-                    <div key={i} className="p-4 rounded-2xl border border-brand-200 hover:border-brand-500 transition-colors cursor-pointer" onClick={() => { setCurrentTheme(h); setShowHistory(false); }}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: h.vibeColor }}></div>
-                        <span className="text-[10px] uppercase tracking-widest font-bold opacity-40">{h.category}</span>
-                      </div>
-                      <h4 className="font-bold mb-1">{h.title}</h4>
-                      <p className="text-xs opacity-60 line-clamp-2">{h.description}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
- 
-      {/* Footer */}
-      <footer className="w-full mt-12 pt-8 border-t border-brand-200 flex flex-col md:flex-row justify-between items-center gap-4 opacity-40">
-        <p className="text-xs">© 2026 城市漫步者。带着意图去漫步。</p>
-        <div className="flex gap-6 text-xs font-medium uppercase tracking-widest">
-          <a href="#" className="hover:opacity-100 transition-opacity">关于</a>
-          <a href="#" className="hover:opacity-100 transition-opacity">隐私</a>
-          <a href="#" className="hover:opacity-100 transition-opacity">指南</a>
-        </div>
-      </footer>
+      </div>
     </div>
+  );
+}
+
+function InfoSelect(props: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const { label, value, options, onChange } = props;
+
+  return (
+    <label className="block rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full bg-transparent text-sm outline-none"
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
