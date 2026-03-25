@@ -29,6 +29,7 @@ import {
   generateDynamicPreset,
   MapPOI,
   getLocationContext,
+  searchLocationContext,
 } from './services/themeService';
 import { createWalk, fetchPublicWalks, WalkItem } from './services/walkApi';
 import { submitTheme } from './services/themeCommunityApi';
@@ -49,6 +50,13 @@ type PathPoint = {
 const RANDOM_CATEGORIES = ['形状漫步', '颜色漫步', '声音漫步', '街区漫步', '质感漫步'];
 const COMBINE_CATEGORIES = ['形状漫步', '颜色漫步', '声音漫步', '街区漫步', '自然漫步'];
 const DEFAULT_CENTER: [number, number] = [31.2304, 121.4737];
+const DEFAULT_POI_ICON = new L.Icon.Default();
+const ACTIVE_POI_ICON = L.divIcon({
+  className: 'selected-poi-marker',
+  html: '<div style="width:18px;height:18px;border-radius:9999px;background:#f59e0b;border:3px solid white;box-shadow:0 4px 12px rgba(15,23,42,0.28);"></div>',
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
 
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -115,6 +123,7 @@ export default function App() {
   const [selectedLocation, setSelectedLocation] = useState<SearchLocation | null>(null);
   const [selectedThemesForCombine, setSelectedThemesForCombine] = useState<string[]>([]);
   const [nearbyPois, setNearbyPois] = useState<MapPOI[]>([]);
+  const [selectedPoiKey, setSelectedPoiKey] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
   const [isPublic, setIsPublic] = useState(true);
   const [path, setPath] = useState<PathPoint[]>([]);
@@ -183,6 +192,7 @@ export default function App() {
   useEffect(() => {
     if (!selectedLocation) {
       setNearbyPois([]);
+      setSelectedPoiKey(null);
       return;
     }
 
@@ -324,6 +334,7 @@ export default function App() {
 
   const handleSelectLocation = async (location: SearchLocation) => {
     setSelectedLocation(location);
+    setSelectedPoiKey(null);
     setSearchLocation(location.name);
     setSearchResults([]);
     setIsGenerating(true);
@@ -353,12 +364,43 @@ export default function App() {
       const context = await getLocationContext(lat, lng);
       const locationName = `地图选点 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
       setSelectedLocation({ name: locationName, lat, lng });
+      setSelectedPoiKey(null);
       setSearchLocation(locationName);
       setSearchResults([]);
       setLocationContext(context);
     } catch (error) {
       console.error('Select map point error:', error);
       alert('地图选点失败，请稍后重试。');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleSelectPoi = async (poi: MapPOI) => {
+    if (typeof poi.lat !== 'number' || typeof poi.lng !== 'number') {
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const [geoContext, nameContext] = await Promise.all([
+        getLocationContext(poi.lat, poi.lng),
+        searchLocationContext(poi.title),
+      ]);
+      const mergedContext = nameContext && nameContext !== poi.title ? nameContext : geoContext;
+      const poiKey = `${poi.title}-${poi.lat}-${poi.lng}`;
+      setSelectedLocation({
+        name: poi.title,
+        lat: poi.lat,
+        lng: poi.lng,
+      });
+      setSelectedPoiKey(poiKey);
+      setSearchLocation(poi.title);
+      setSearchResults([]);
+      setLocationContext(mergedContext);
+    } catch (error) {
+      console.error('Select POI error:', error);
+      alert('切换到该 POI 失败，请稍后重试。');
     } finally {
       setIsGenerating(false);
     }
@@ -660,11 +702,21 @@ export default function App() {
                     {nearbyPois
                       .filter((poi) => typeof poi.lat === 'number' && typeof poi.lng === 'number')
                       .map((poi, index) => (
-                        <Marker key={`${poi.title}-${index}`} position={[poi.lat as number, poi.lng as number]}>
+                        <Marker
+                          key={`${poi.title}-${index}`}
+                          position={[poi.lat as number, poi.lng as number]}
+                          icon={selectedPoiKey === `${poi.title}-${poi.lat}-${poi.lng}` ? ACTIVE_POI_ICON : DEFAULT_POI_ICON}
+                        >
                           <Popup>
                             <div className="space-y-1">
                               <div className="font-medium">{poi.title}</div>
-                              <a href={poi.uri} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">
+                              <button
+                                onClick={() => void handleSelectPoi(poi)}
+                                className="block text-sm text-amber-700 underline"
+                              >
+                                设为当前地点
+                              </button>
+                              <a href={poi.uri} target="_blank" rel="noreferrer" className="block text-sm text-blue-600 underline">
                                 查看地图链接
                               </a>
                             </div>
@@ -703,16 +755,22 @@ export default function App() {
                   ) : (
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       {nearbyPois.map((poi, index) => (
-                        <a
+                        <button
                           key={`${poi.title}-${index}`}
-                          href={poi.uri}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm hover:bg-slate-100"
+                          onClick={() => void handleSelectPoi(poi)}
+                          className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                            selectedPoiKey === `${poi.title}-${poi.lat}-${poi.lng}`
+                              ? 'border-amber-300 bg-amber-50 shadow-sm'
+                              : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+                          }`}
                         >
                           <div className="font-medium text-slate-800">{poi.title}</div>
-                          <div className="mt-1 text-xs text-slate-500">查看地图链接</div>
-                        </a>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {selectedPoiKey === `${poi.title}-${poi.lat}-${poi.lng}`
+                              ? '当前已选中，AI 将围绕这里生成环境和主题'
+                              : '点击切换到这里并刷新 AI 地点环境'}
+                          </div>
+                        </button>
                       ))}
                     </div>
                   )}

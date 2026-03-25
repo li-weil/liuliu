@@ -5,10 +5,15 @@ spring:
   application:
     name: citywalk-backend
 
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY:sk-43d7e59bc1474affa4bf4f63b44ed727}
+  model: ${DEEPSEEK_MODEL:deepseek-chat}
+  base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+
 gemini:
-  api-key: AIzaSyA1abIEOajQ0WG8fM8PLswFWTK6MOdzN1A
-  model: gemini-2.5-flash
-  base-url: https://generativelanguage.googleapis.com
+  api-key: ${GEMINI_API_KEY:}
+  model: ${GEMINI_MODEL:gemini-2.5-flash}
+  base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
 
 wechat:
   open:

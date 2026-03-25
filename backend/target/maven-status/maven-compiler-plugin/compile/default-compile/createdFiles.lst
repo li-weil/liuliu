@@ -2,6 +2,7 @@ com\liuliu\citywalk\model\dto\response\FileUploadResponse.class
 com\liuliu\citywalk\CityWalkBackendApplication.class
 com\liuliu\citywalk\model\dto\response\WechatCallbackResponse.class
 com\liuliu\citywalk\service\GeminiThemeService.class
+com\liuliu\citywalk\service\DeepSeekThemeService$ThemePayload.class
 com\liuliu\citywalk\service\MapSearchService$OverpassCenter.class
 com\liuliu\citywalk\service\WechatAuthService.class
 com\liuliu\citywalk\controller\AuthController.class
@@ -25,12 +26,14 @@ com\liuliu\citywalk\common\ApiResponse.class
 com\liuliu\citywalk\model\dto\response\UserProfileResponse.class
 com\liuliu\citywalk\controller\ThemeController.class
 com\liuliu\citywalk\controller\AiThemeController.class
+com\liuliu\citywalk\service\DeepSeekThemeService.class
 com\liuliu\citywalk\service\MapSearchService$OverpassTags.class
 com\liuliu\citywalk\config\GeminiProperties.class
 com\liuliu\citywalk\model\dto\request\PathPointRequest.class
 com\liuliu\citywalk\service\MapSearchService$OverpassElement.class
 com\liuliu\citywalk\model\dto\response\LocationSearchResponse.class
 com\liuliu\citywalk\service\MapSearchService$1.class
+com\liuliu\citywalk\config\DeepSeekProperties.class
 com\liuliu\citywalk\model\dto\response\LocationContextResponse.class
 com\liuliu\citywalk\controller\FileController.class
 com\liuliu\citywalk\service\MapSearchService$NominatimItem.class

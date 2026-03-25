@@ -1,5 +1,6 @@
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\CityWalkBackendApplication.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\common\ApiResponse.java
+D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\config\DeepSeekProperties.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\config\GeminiProperties.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\config\WebCorsConfig.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\config\WechatOpenProperties.java
@@ -28,6 +29,7 @@ D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\response\Wa
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\response\WechatCallbackResponse.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\response\WechatLoginUrlResponse.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\service\AuthTokenService.java
+D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\service\DeepSeekThemeService.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\service\GeminiThemeService.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\service\MapSearchService.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\service\WechatAuthService.java
