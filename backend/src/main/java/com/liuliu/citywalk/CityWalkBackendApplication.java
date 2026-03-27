@@ -1,5 +1,6 @@
 package com.liuliu.citywalk;
 
+import com.liuliu.citywalk.config.AmapProperties;
 import com.liuliu.citywalk.config.DeepSeekProperties;
 import com.liuliu.citywalk.config.WechatOpenProperties;
 import com.liuliu.citywalk.config.GeminiProperties;
@@ -8,7 +9,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableConfigurationProperties({WechatOpenProperties.class, GeminiProperties.class, DeepSeekProperties.class})
+@EnableConfigurationProperties({WechatOpenProperties.class, GeminiProperties.class, DeepSeekProperties.class, AmapProperties.class})
 public class CityWalkBackendApplication {
 
     public static void main(String[] args) {

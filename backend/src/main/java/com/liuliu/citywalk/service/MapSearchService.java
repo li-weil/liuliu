@@ -1,7 +1,8 @@
 package com.liuliu.citywalk.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.liuliu.citywalk.config.AmapProperties;
 import com.liuliu.citywalk.model.dto.response.LocationSearchResponse;
 import com.liuliu.citywalk.model.dto.response.PoiResponse;
 import org.springframework.stereotype.Service;
@@ -16,23 +17,24 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 @Service
 public class MapSearchService {
 
-    private static final String USER_AGENT = "citywalk-backend/0.1 (local-dev)";
-    private static final double SEARCH_RADIUS_METERS = 800D;
+    private static final int SEARCH_RADIUS_METERS = 3000;
+    private static final int MAX_SEARCH_RESULTS = 5;
     private static final int MAX_POI_RESULTS = 12;
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final AmapProperties amapProperties;
 
-    public MapSearchService(ObjectMapper objectMapper) {
+    public MapSearchService(ObjectMapper objectMapper, AmapProperties amapProperties) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
         this.objectMapper = objectMapper;
+        this.amapProperties = amapProperties;
     }
 
     public List<LocationSearchResponse> search(String query) {
@@ -41,32 +43,35 @@ public class MapSearchService {
             return List.of();
         }
 
-        String encodedQuery = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
-        String url = "https://nominatim.openstreetmap.org/search?format=json&q=" + encodedQuery
-                + "&limit=5&accept-language=zh-CN";
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("User-Agent", USER_AGENT)
-                .header("Accept", "application/json")
-                .GET()
-                .timeout(Duration.ofSeconds(15))
-                .build();
+        if (!isConfigured()) {
+            return fallbackLocations(keyword);
+        }
 
         try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            List<NominatimItem> items = objectMapper.readValue(response.body(), new TypeReference<>() {});
-            return items.stream()
-                    .map(item -> new LocationSearchResponse(
-                            item.display_name(),
-                            parseDouble(item.lat()),
-                            parseDouble(item.lon())
-                    ))
-                    .toList();
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
+            String url = amapProperties.getBaseUrl()
+                    + "/v3/place/text?keywords=" + encode(keyword)
+                    + "&offset=" + MAX_SEARCH_RESULTS
+                    + "&page=1&extensions=base&key=" + encode(amapProperties.getWebKey());
+            JsonNode root = sendGet(url);
+            JsonNode pois = root.path("pois");
+            if (!pois.isArray() || pois.isEmpty()) {
+                return fallbackLocations(keyword);
             }
+
+            List<LocationSearchResponse> results = new ArrayList<>();
+            for (JsonNode poi : pois) {
+                double[] location = parseLocation(poi.path("location").asText());
+                if (location == null) {
+                    continue;
+                }
+                results.add(new LocationSearchResponse(
+                        buildLocationDisplayName(poi),
+                        location[1],
+                        location[0]
+                ));
+            }
+            return results.isEmpty() ? fallbackLocations(keyword) : results;
+        } catch (Exception error) {
             return fallbackLocations(keyword);
         }
     }
@@ -76,82 +81,99 @@ public class MapSearchService {
             return List.of();
         }
 
-        String overpassQuery = """
-                [out:json][timeout:20];
-                (
-                  node(around:%d,%s,%s)[tourism];
-                  node(around:%d,%s,%s)[amenity~"cafe|restaurant|library|arts_centre|museum|gallery|theatre|bar|pub"];
-                  node(around:%d,%s,%s)[shop~"books|coffee|gift|art"];
-                  way(around:%d,%s,%s)[tourism];
-                  way(around:%d,%s,%s)[amenity~"cafe|restaurant|library|arts_centre|museum|gallery|theatre|bar|pub"];
-                  way(around:%d,%s,%s)[shop~"books|coffee|gift|art"];
-                );
-                out center %d;
-                """.formatted(
-                (int) SEARCH_RADIUS_METERS, formatCoordinate(lat), formatCoordinate(lng),
-                (int) SEARCH_RADIUS_METERS, formatCoordinate(lat), formatCoordinate(lng),
-                (int) SEARCH_RADIUS_METERS, formatCoordinate(lat), formatCoordinate(lng),
-                (int) SEARCH_RADIUS_METERS, formatCoordinate(lat), formatCoordinate(lng),
-                (int) SEARCH_RADIUS_METERS, formatCoordinate(lat), formatCoordinate(lng),
-                (int) SEARCH_RADIUS_METERS, formatCoordinate(lat), formatCoordinate(lng),
-                MAX_POI_RESULTS
-        );
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("https://overpass-api.de/api/interpreter"))
-                .header("User-Agent", USER_AGENT)
-                .header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(overpassQuery))
-                .timeout(Duration.ofSeconds(20))
-                .build();
+        if (!isConfigured()) {
+            return fallbackPois(lat, lng);
+        }
 
         try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            OverpassResponse overpassResponse = objectMapper.readValue(response.body(), OverpassResponse.class);
-            if (overpassResponse == null || overpassResponse.elements() == null) {
+            String location = lng + "," + lat;
+            String url = amapProperties.getBaseUrl()
+                    + "/v3/place/around?location=" + encode(location)
+                    + "&radius=" + SEARCH_RADIUS_METERS
+                    + "&sortrule=distance&offset=" + MAX_POI_RESULTS
+                    + "&page=1&extensions=base&key=" + encode(amapProperties.getWebKey());
+            JsonNode root = sendGet(url);
+            JsonNode pois = root.path("pois");
+            if (!pois.isArray() || pois.isEmpty()) {
                 return fallbackPois(lat, lng);
             }
 
-            List<PoiResponse> pois = new ArrayList<>();
-            for (OverpassElement element : overpassResponse.elements()) {
-                String title = resolvePoiTitle(element);
-                Double poiLat = element.lat() != null ? element.lat() : element.center() != null ? element.center().lat() : null;
-                Double poiLng = element.lon() != null ? element.lon() : element.center() != null ? element.center().lon() : null;
-                if (title == null || poiLat == null || poiLng == null) {
+            List<PoiResponse> results = new ArrayList<>();
+            for (JsonNode poi : pois) {
+                double[] poiLocation = parseLocation(poi.path("location").asText());
+                if (poiLocation == null) {
                     continue;
                 }
-
-                pois.add(new PoiResponse(
-                        title,
-                        buildOsmLink(poiLat, poiLng),
-                        poiLat,
-                        poiLng
-                ));
-
-                if (pois.size() >= MAX_POI_RESULTS) {
-                    break;
+                String title = poi.path("name").asText();
+                if (title == null || title.isBlank()) {
+                    continue;
                 }
+                results.add(new PoiResponse(
+                        title,
+                        buildAmapLink(title, poiLocation[0], poiLocation[1]),
+                        poiLocation[1],
+                        poiLocation[0]
+                ));
             }
-
-            return pois.isEmpty() ? fallbackPois(lat, lng) : pois;
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
+            return results.isEmpty() ? fallbackPois(lat, lng) : results;
+        } catch (Exception error) {
             return fallbackPois(lat, lng);
         }
     }
 
-    private Double parseDouble(String value) {
+    private JsonNode sendGet(String url) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Accept", "application/json")
+                .timeout(Duration.ofSeconds(20))
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() >= 400) {
+            throw new IOException("Amap HTTP " + response.statusCode() + ": " + response.body());
+        }
+
+        JsonNode root = objectMapper.readTree(response.body());
+        String status = root.path("status").asText();
+        if (!"1".equals(status)) {
+            throw new IOException("Amap API error: " + root.path("info").asText("unknown"));
+        }
+        return root;
+    }
+
+    private boolean isConfigured() {
+        return amapProperties.getWebKey() != null && !amapProperties.getWebKey().isBlank();
+    }
+
+    private String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private double[] parseLocation(String value) {
+        if (value == null || value.isBlank() || !value.contains(",")) {
+            return null;
+        }
+        String[] parts = value.split(",");
+        if (parts.length != 2) {
+            return null;
+        }
         try {
-            return Double.parseDouble(value);
-        } catch (NumberFormatException e) {
-            return 0D;
+            return new double[]{Double.parseDouble(parts[0]), Double.parseDouble(parts[1])};
+        } catch (NumberFormatException error) {
+            return null;
         }
     }
 
-    private String formatCoordinate(Double value) {
-        return String.format(Locale.US, "%.6f", value);
+    private String buildLocationDisplayName(JsonNode poi) {
+        String name = poi.path("name").asText("");
+        String address = poi.path("address").asText("");
+        String district = poi.path("adname").asText("");
+        String city = poi.path("cityname").asText("");
+        String suffix = String.join(" ", List.of(city, district, address).stream()
+                .filter(item -> item != null && !item.isBlank())
+                .toList());
+        return suffix.isBlank() ? name : name + " - " + suffix;
     }
 
     private List<LocationSearchResponse> fallbackLocations(String keyword) {
@@ -164,68 +186,13 @@ public class MapSearchService {
 
     private List<PoiResponse> fallbackPois(Double lat, Double lng) {
         return List.of(
-                new PoiResponse("附近咖啡馆", buildOsmLink(lat, lng), lat, lng),
-                new PoiResponse("城市书店", buildOsmLink(lat + 0.0012, lng + 0.0011), lat + 0.0012, lng + 0.0011),
-                new PoiResponse("街角展览空间", buildOsmLink(lat - 0.0009, lng + 0.0008), lat - 0.0009, lng + 0.0008)
+                new PoiResponse("附近咖啡馆", buildAmapLink("附近咖啡馆", lng, lat), lat, lng),
+                new PoiResponse("城市书店", buildAmapLink("城市书店", lng + 0.0011, lat + 0.0012), lat + 0.0012, lng + 0.0011),
+                new PoiResponse("街角展览空间", buildAmapLink("街角展览空间", lng + 0.0008, lat - 0.0009), lat - 0.0009, lng + 0.0008)
         );
     }
 
-    private String buildOsmLink(Double lat, Double lng) {
-        return "https://www.openstreetmap.org/?mlat=" + lat + "&mlon=" + lng + "#map=18/" + lat + "/" + lng;
-    }
-
-    private String resolvePoiTitle(OverpassElement element) {
-        if (element.tags() == null) {
-            return null;
-        }
-        if (element.tags().name() != null && !element.tags().name().isBlank()) {
-            return element.tags().name();
-        }
-        if (element.tags().tourism() != null) {
-            return "附近" + element.tags().tourism();
-        }
-        if (element.tags().amenity() != null) {
-            return "附近" + element.tags().amenity();
-        }
-        if (element.tags().shop() != null) {
-            return "附近" + element.tags().shop();
-        }
-        return null;
-    }
-
-    private record NominatimItem(
-            String display_name,
-            String lat,
-            String lon
-    ) {
-    }
-
-    private record OverpassResponse(
-            List<OverpassElement> elements
-    ) {
-    }
-
-    private record OverpassElement(
-            String type,
-            Long id,
-            Double lat,
-            Double lon,
-            OverpassCenter center,
-            OverpassTags tags
-    ) {
-    }
-
-    private record OverpassCenter(
-            Double lat,
-            Double lon
-    ) {
-    }
-
-    private record OverpassTags(
-            String name,
-            String tourism,
-            String amenity,
-            String shop
-    ) {
+    private String buildAmapLink(String name, double lng, double lat) {
+        return "https://uri.amap.com/marker?position=" + lng + "," + lat + "&name=" + encode(name);
     }
 }

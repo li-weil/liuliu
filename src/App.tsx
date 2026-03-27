@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import L from 'leaflet';
-import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import {
   Compass,
   History,
@@ -50,42 +48,96 @@ type PathPoint = {
 const RANDOM_CATEGORIES = ['形状漫步', '颜色漫步', '声音漫步', '街区漫步', '质感漫步'];
 const COMBINE_CATEGORIES = ['形状漫步', '颜色漫步', '声音漫步', '街区漫步', '自然漫步'];
 const DEFAULT_CENTER: [number, number] = [31.2304, 121.4737];
-const DEFAULT_POI_ICON = new L.Icon.Default();
-const ACTIVE_POI_ICON = L.divIcon({
-  className: 'selected-poi-marker',
-  html: '<div style="width:18px;height:18px;border-radius:9999px;background:#f59e0b;border:3px solid white;box-shadow:0 4px 12px rgba(15,23,42,0.28);"></div>',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-});
 
-delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
-
-function MapViewUpdater(props: { center: [number, number] }) {
-  const { center } = props;
-  const map = useMap();
-
-  useEffect(() => {
-    map.setView(center, 14);
-  }, [center, map]);
-
-  return null;
+declare global {
+  interface Window {
+    AMap?: any;
+    __amapLoaderPromise?: Promise<any>;
+  }
 }
 
-function MapClickSelector(props: { onSelect: (lat: number, lng: number) => void }) {
-  const { onSelect } = props;
+function getAmapJsKey() {
+  return import.meta.env.VITE_AMAP_JS_KEY?.trim() || '';
+}
 
-  useMapEvents({
-    click(event) {
-      onSelect(event.latlng.lat, event.latlng.lng);
-    },
+function loadAmapJsApi(): Promise<any> {
+  if (typeof window === 'undefined') {
+    return Promise.reject(new Error('Current environment cannot load AMap.'));
+  }
+
+  if (window.AMap) {
+    return Promise.resolve(window.AMap);
+  }
+
+  if (window.__amapLoaderPromise) {
+    return window.__amapLoaderPromise;
+  }
+
+  const amapJsKey = getAmapJsKey();
+  if (!amapJsKey) {
+    return Promise.reject(new Error('Missing VITE_AMAP_JS_KEY.'));
+  }
+
+  window.__amapLoaderPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(amapJsKey)}&plugin=AMap.Scale,AMap.ToolBar`;
+    script.async = true;
+    script.onload = () => {
+      if (window.AMap) {
+        resolve(window.AMap);
+        return;
+      }
+      reject(new Error('AMap loaded without global AMap.'));
+    };
+    script.onerror = () => reject(new Error('Failed to load AMap JS API.'));
+    document.head.appendChild(script);
   });
 
-  return null;
+  return window.__amapLoaderPromise;
+}
+
+function createMarkerContent(color: string, size = 18, label?: string) {
+  const safeLabel = label ? escapeHtml(label) : '';
+  return `
+    <div style="display:flex;flex-direction:column;align-items:center;transform:translateY(-6px);">
+      ${
+        safeLabel
+          ? `<div style="
+              margin-bottom:6px;
+              max-width:140px;
+              padding:4px 8px;
+              border-radius:9999px;
+              background:rgba(255,255,255,0.96);
+              border:1px solid rgba(148,163,184,0.35);
+              box-shadow:0 6px 18px rgba(15,23,42,0.14);
+              color:#0f172a;
+              font-size:12px;
+              line-height:1.2;
+              white-space:nowrap;
+              overflow:hidden;
+              text-overflow:ellipsis;
+            ">${safeLabel}</div>`
+          : ''
+      }
+      <div style="
+        width:${size}px;
+        height:${size}px;
+        border-radius:9999px;
+        background:${color};
+        border:3px solid white;
+        box-shadow:0 4px 12px rgba(15,23,42,0.28);
+      "></div>
+    </div>
+  `;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function calculatePathDistance(points: PathPoint[]) {
@@ -95,12 +147,179 @@ function calculatePathDistance(points: PathPoint[]) {
 
   let totalMeters = 0;
   for (let index = 1; index < points.length; index += 1) {
-    totalMeters += L.latLng(points[index - 1].lat, points[index - 1].lng).distanceTo(
-      L.latLng(points[index].lat, points[index].lng),
-    );
+    const previousPoint = points[index - 1];
+    const currentPoint = points[index];
+    const earthRadius = 6371000;
+    const dLat = ((currentPoint.lat - previousPoint.lat) * Math.PI) / 180;
+    const dLng = ((currentPoint.lng - previousPoint.lng) * Math.PI) / 180;
+    const lat1 = (previousPoint.lat * Math.PI) / 180;
+    const lat2 = (currentPoint.lat * Math.PI) / 180;
+    const haversine =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    totalMeters += 2 * earthRadius * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
   }
 
   return totalMeters;
+}
+
+function AmapScene(props: {
+  center: [number, number];
+  selectedLocation: SearchLocation | null;
+  pathCoordinates: [number, number][];
+  nearbyPois: MapPOI[];
+  selectedPoiKey: string | null;
+  onSelectMapPoint: (lat: number, lng: number) => void;
+  onSelectPoi: (poi: MapPOI) => void;
+}) {
+  const { center, selectedLocation, pathCoordinates, nearbyPois, selectedPoiKey, onSelectMapPoint, onSelectPoi } = props;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<any>(null);
+  const overlaysRef = useRef<any[]>([]);
+  const infoWindowRef = useRef<any>(null);
+  const [mapReadyVersion, setMapReadyVersion] = useState(0);
+
+  useEffect(() => {
+    let isDisposed = false;
+
+    loadAmapJsApi()
+      .then((AMap) => {
+        if (isDisposed || !containerRef.current || mapRef.current) {
+          return;
+        }
+
+        const map = new AMap.Map(containerRef.current, {
+          zoom: 13,
+          center: [center[1], center[0]],
+          resizeEnable: true,
+          viewMode: '2D',
+        });
+
+        map.addControl(new AMap.Scale());
+        map.addControl(new AMap.ToolBar());
+        map.on('click', (event: any) => {
+          onSelectMapPoint(event.lnglat.getLat(), event.lnglat.getLng());
+        });
+
+        mapRef.current = map;
+        setMapReadyVersion((value) => value + 1);
+      })
+      .catch((error) => {
+        console.error('Load AMap error:', error);
+      });
+
+    return () => {
+      isDisposed = true;
+      if (infoWindowRef.current) {
+        infoWindowRef.current.close();
+      }
+      if (mapRef.current) {
+        mapRef.current.destroy();
+        mapRef.current = null;
+      }
+      setMapReadyVersion(0);
+    };
+  }, [center, onSelectMapPoint]);
+
+  useEffect(() => {
+    if (!mapRef.current) {
+      return;
+    }
+
+    mapRef.current.setCenter([center[1], center[0]]);
+  }, [center]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const AMap = window.AMap;
+    if (!map || !AMap) {
+      return;
+    }
+
+    if (overlaysRef.current.length > 0) {
+      map.remove(overlaysRef.current);
+      overlaysRef.current = [];
+    }
+
+    const overlays: any[] = [];
+
+    if (selectedLocation) {
+      overlays.push(
+        new AMap.Marker({
+          position: [selectedLocation.lng, selectedLocation.lat],
+          anchor: 'center',
+          offset: new AMap.Pixel(-10, -10),
+          content: createMarkerContent('#0f172a', 20),
+          title: selectedLocation.name,
+        }),
+      );
+    } else if (pathCoordinates.length > 0) {
+      const [lastLat, lastLng] = pathCoordinates[pathCoordinates.length - 1];
+      overlays.push(
+        new AMap.Marker({
+          position: [lastLng, lastLat],
+          anchor: 'center',
+          offset: new AMap.Pixel(-10, -10),
+          content: createMarkerContent('#0f172a', 20),
+          title: 'Current path point',
+        }),
+      );
+    }
+
+    nearbyPois
+      .filter((poi) => typeof poi.lat === 'number' && typeof poi.lng === 'number')
+      .forEach((poi) => {
+        const poiKey = `${poi.title}-${poi.lat}-${poi.lng}`;
+        const marker = new AMap.Marker({
+          position: [poi.lng as number, poi.lat as number],
+          anchor: 'center',
+          offset: new AMap.Pixel(-50, -36),
+          content: createMarkerContent(selectedPoiKey === poiKey ? '#f59e0b' : '#2563eb', 18, poi.title),
+          title: poi.title,
+        });
+
+        marker.on('click', () => {
+          onSelectPoi(poi);
+          if (!infoWindowRef.current) {
+            infoWindowRef.current = new AMap.InfoWindow({
+              offset: new AMap.Pixel(0, -24),
+            });
+          }
+
+          infoWindowRef.current.setContent(`
+            <div style="padding:4px 2px;min-width:180px;">
+              <div style="font-weight:600;color:#0f172a;">${escapeHtml(poi.title)}</div>
+              <div style="margin-top:6px;font-size:12px;color:#475569;">已切换为当前地点，AI 会围绕这里继续生成内容。</div>
+              <a href="${poi.uri}" target="_blank" rel="noreferrer" style="display:inline-block;margin-top:8px;font-size:12px;color:#2563eb;text-decoration:underline;">在高德中查看</a>
+            </div>
+          `);
+          infoWindowRef.current.open(map, [poi.lng as number, poi.lat as number]);
+        });
+
+        overlays.push(marker);
+      });
+
+    if (pathCoordinates.length > 1) {
+      overlays.push(
+        new AMap.Polyline({
+          path: pathCoordinates.map(([lat, lng]) => [lng, lat]),
+          strokeColor: '#f59e0b',
+          strokeWeight: 5,
+          strokeOpacity: 0.95,
+          lineJoin: 'round',
+          lineCap: 'round',
+        }),
+      );
+    }
+
+    if (overlays.length > 0) {
+      map.add(overlays);
+    }
+
+    overlaysRef.current = overlays;
+  }, [mapReadyVersion, nearbyPois, onSelectPoi, pathCoordinates, selectedLocation, selectedPoiKey]);
+
+  return <div ref={containerRef} className="h-full w-full" />;
 }
 
 export default function App() {
@@ -682,49 +901,15 @@ export default function App() {
                 </div>
 
                 <div className="h-[360px]">
-                  <MapContainer center={mapCenter} zoom={13} className="h-full w-full">
-                    <TileLayer
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    />
-                    <MapViewUpdater center={mapCenter} />
-                    <MapClickSelector onSelect={(lat, lng) => void handleSelectMapPoint(lat, lng)} />
-                    {selectedLocation && (
-                      <Marker position={[selectedLocation.lat, selectedLocation.lng]}>
-                        <Popup>{selectedLocation.name}</Popup>
-                      </Marker>
-                    )}
-                    {!selectedLocation && pathCoordinates.length > 0 && (
-                      <Marker position={pathCoordinates[pathCoordinates.length - 1]}>
-                        <Popup>当前轨迹位置</Popup>
-                      </Marker>
-                    )}
-                    {nearbyPois
-                      .filter((poi) => typeof poi.lat === 'number' && typeof poi.lng === 'number')
-                      .map((poi, index) => (
-                        <Marker
-                          key={`${poi.title}-${index}`}
-                          position={[poi.lat as number, poi.lng as number]}
-                          icon={selectedPoiKey === `${poi.title}-${poi.lat}-${poi.lng}` ? ACTIVE_POI_ICON : DEFAULT_POI_ICON}
-                        >
-                          <Popup>
-                            <div className="space-y-1">
-                              <div className="font-medium">{poi.title}</div>
-                              <button
-                                onClick={() => void handleSelectPoi(poi)}
-                                className="block text-sm text-amber-700 underline"
-                              >
-                                设为当前地点
-                              </button>
-                              <a href={poi.uri} target="_blank" rel="noreferrer" className="block text-sm text-blue-600 underline">
-                                查看地图链接
-                              </a>
-                            </div>
-                          </Popup>
-                        </Marker>
-                      ))}
-                    {pathCoordinates.length > 1 && <Polyline positions={pathCoordinates} pathOptions={{ color: '#f59e0b', weight: 5 }} />}
-                  </MapContainer>
+                  <AmapScene
+                    center={mapCenter}
+                    selectedLocation={selectedLocation}
+                    pathCoordinates={pathCoordinates}
+                    nearbyPois={nearbyPois}
+                    selectedPoiKey={selectedPoiKey}
+                    onSelectMapPoint={(lat, lng) => void handleSelectMapPoint(lat, lng)}
+                    onSelectPoi={(poi) => void handleSelectPoi(poi)}
+                  />
                 </div>
 
                 <div className="border-t border-slate-100 px-5 py-4">

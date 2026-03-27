@@ -9,20 +9,67 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/files")
 public class FileController {
 
+    private static final Path UPLOAD_ROOT = Paths.get("uploads");
+
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<FileUploadResponse> upload(@RequestPart("file") MultipartFile file,
-                                                  @RequestParam("bizType") String bizType) {
+                                                  @RequestParam("bizType") String bizType) throws IOException {
+        String safeBizType = normalizeSegment(bizType, "common");
+        String originalName = file.getOriginalFilename() == null ? "file" : file.getOriginalFilename();
+        String extension = extractExtension(originalName);
+        String fileId = "f_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().replace("-", "");
+        String fileName = fileId + extension;
+        Path targetDirectory = UPLOAD_ROOT.resolve(safeBizType);
+        Files.createDirectories(targetDirectory);
+
+        Path targetPath = targetDirectory.resolve(fileName).normalize();
+        try (InputStream inputStream = file.getInputStream()) {
+            Files.copy(inputStream, targetPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        String url = ServletUriComponentsBuilder.fromCurrentContextPath()
+                .path("/uploads/")
+                .path(safeBizType)
+                .path("/")
+                .path(fileName)
+                .toUriString();
+
         FileUploadResponse response = new FileUploadResponse(
-                "f_" + System.currentTimeMillis(),
-                "https://cdn.example.com/uploads/" + file.getOriginalFilename(),
+                fileId,
+                url,
                 file.getContentType(),
                 file.getSize()
         );
         return ApiResponse.success(response);
+    }
+
+    private String normalizeSegment(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String normalized = value.replaceAll("[^a-zA-Z0-9_-]", "");
+        return normalized.isBlank() ? fallback : normalized;
+    }
+
+    private String extractExtension(String filename) {
+        int index = filename.lastIndexOf('.');
+        if (index < 0 || index == filename.length() - 1) {
+            return "";
+        }
+        return filename.substring(index);
     }
 }
