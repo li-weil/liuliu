@@ -36,6 +36,9 @@ public class MiniappWalkController {
             @RequestBody MiniappCreateWalkRequest request
     ) {
         MiniappSessionService.StoredMiniappUser user = miniappSessionService.resolveUser(authorizationHeader);
+        if (user == null || user.isGuest()) {
+            return ApiResponse.fail(401, "请先登录后再保存漫步记录");
+        }
         MiniappWalkRecordResponse record = miniappWalkService.create(user.id(), request);
         return ApiResponse.success(new MiniappCreateWalkResponse(true, record._id()));
     }

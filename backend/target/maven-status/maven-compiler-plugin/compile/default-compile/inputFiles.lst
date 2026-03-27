@@ -52,6 +52,10 @@ D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\response\Us
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\response\WalkResponse.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\response\WechatCallbackResponse.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\response\WechatLoginUrlResponse.java
+D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\repository\MiniappSessionRepository.java
+D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\repository\MiniappUserRepository.java
+D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\repository\MiniappWalkRepository.java
+D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\repository\UploadedFileRepository.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\service\AuthTokenService.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\service\DeepSeekThemeService.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\service\GeminiThemeService.java

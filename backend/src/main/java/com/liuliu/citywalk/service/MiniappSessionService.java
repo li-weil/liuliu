@@ -2,12 +2,10 @@ package com.liuliu.citywalk.service;
 
 import com.liuliu.citywalk.model.dto.response.MiniappSyncUserResponse;
 import com.liuliu.citywalk.model.dto.response.MiniappUserResponse;
-import org.springframework.http.HttpHeaders;
+import com.liuliu.citywalk.repository.MiniappSessionRepository;
+import com.liuliu.citywalk.repository.MiniappUserRepository;
 import org.springframework.stereotype.Service;
-
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class MiniappSessionService {
@@ -15,52 +13,56 @@ public class MiniappSessionService {
     private static final long DEFAULT_EXPIRES_IN = 7200L;
 
     private final AuthTokenService authTokenService;
-    private final AtomicLong userIdSequence = new AtomicLong(2000L);
-    private final Map<String, StoredMiniappUser> usersByOpenId = new ConcurrentHashMap<>();
-    private final Map<String, StoredMiniappUser> sessions = new ConcurrentHashMap<>();
+    private final MiniappUserRepository miniappUserRepository;
+    private final MiniappSessionRepository miniappSessionRepository;
     private final StoredMiniappUser guestUser = new StoredMiniappUser(0L, "guest", "游客", "", "guest", 0L, 0L);
 
-    public MiniappSessionService(AuthTokenService authTokenService) {
+    public MiniappSessionService(
+            AuthTokenService authTokenService,
+            MiniappUserRepository miniappUserRepository,
+            MiniappSessionRepository miniappSessionRepository
+    ) {
         this.authTokenService = authTokenService;
+        this.miniappUserRepository = miniappUserRepository;
+        this.miniappSessionRepository = miniappSessionRepository;
     }
 
+    @Transactional
     public MiniappSyncUserResponse syncUser(String code, String nickName, String avatarUrl) {
-        long now = System.currentTimeMillis();
         String openId = buildOpenId(code, nickName);
-        StoredMiniappUser existing = usersByOpenId.get(openId);
-        StoredMiniappUser user = existing == null
-                ? new StoredMiniappUser(
-                userIdSequence.incrementAndGet(),
-                openId,
-                normalizeNickName(nickName),
-                normalizeAvatar(avatarUrl),
-                "user",
-                now,
-                now
-        )
-                : existing.withProfile(normalizeNickName(nickName), normalizeAvatar(avatarUrl), now);
-        usersByOpenId.put(openId, user);
+        MiniappUserRepository.MiniappUserRecord user = miniappUserRepository.findByOpenid(openId)
+                .map(item -> miniappUserRepository.updateProfileAndLogin(item.id(), normalizeNickName(nickName), normalizeAvatar(avatarUrl)))
+                .orElseGet(() -> miniappUserRepository.create(openId, normalizeNickName(nickName), normalizeAvatar(avatarUrl)));
 
         String token = authTokenService.createAccessToken(user.id());
         String refreshToken = authTokenService.createRefreshToken(user.id());
-        sessions.put(token, user);
+        miniappSessionRepository.createSession(user.id(), token, refreshToken, DEFAULT_EXPIRES_IN, "miniapp");
 
-        return new MiniappSyncUserResponse(token, refreshToken, DEFAULT_EXPIRES_IN, user.toResponse(), user.openid());
+        return new MiniappSyncUserResponse(token, refreshToken, DEFAULT_EXPIRES_IN, toResponse(user), user.openid());
     }
 
     public MiniappUserResponse currentUser(String authorizationHeader) {
-        return resolveUser(authorizationHeader).toResponse();
+        return toResponse(resolveUser(authorizationHeader));
     }
 
     public StoredMiniappUser resolveUser(String authorizationHeader) {
-        if (authorizationHeader == null || authorizationHeader.isBlank()) {
+        String token = extractToken(authorizationHeader);
+        if (token == null) {
             return guestUser;
+        }
+
+        return miniappSessionRepository.findValidByAccessToken(token)
+                .flatMap(session -> miniappUserRepository.findById(session.userId()))
+                .map(this::toStoredUser)
+                .orElse(guestUser);
+    }
+
+    private String extractToken(String authorizationHeader) {
+        if (authorizationHeader == null || authorizationHeader.isBlank()) {
+            return null;
         }
         String token = authorizationHeader.replace("Bearer ", "").trim();
-        if (token.isBlank()) {
-            return guestUser;
-        }
-        return sessions.getOrDefault(token, guestUser);
+        return token.isBlank() ? null : token;
     }
 
     private String buildOpenId(String code, String nickName) {
@@ -82,6 +84,42 @@ public class MiniappSessionService {
         return avatarUrl == null ? "" : avatarUrl.trim();
     }
 
+    private StoredMiniappUser toStoredUser(MiniappUserRepository.MiniappUserRecord user) {
+        return new StoredMiniappUser(
+                user.id(),
+                user.openid(),
+                user.nickname(),
+                user.avatarUrl(),
+                user.role(),
+                user.createdAt(),
+                user.lastLoginAt()
+        );
+    }
+
+    private MiniappUserResponse toResponse(StoredMiniappUser user) {
+        return user == null ? null : new MiniappUserResponse(
+                user.id(),
+                user.openid(),
+                user.nickName(),
+                user.avatarUrl(),
+                user.role(),
+                user.createdAt(),
+                user.lastLoginAt()
+        );
+    }
+
+    private MiniappUserResponse toResponse(MiniappUserRepository.MiniappUserRecord user) {
+        return user == null ? null : new MiniappUserResponse(
+                user.id(),
+                user.openid(),
+                user.nickname(),
+                user.avatarUrl(),
+                user.role(),
+                user.createdAt(),
+                user.lastLoginAt()
+        );
+    }
+
     public record StoredMiniappUser(
             Long id,
             String openid,
@@ -91,12 +129,8 @@ public class MiniappSessionService {
             Long createdAt,
             Long lastLoginAt
     ) {
-        public StoredMiniappUser withProfile(String nextNickName, String nextAvatarUrl, Long nextLastLoginAt) {
-            return new StoredMiniappUser(id, openid, nextNickName, nextAvatarUrl, role, createdAt, nextLastLoginAt);
-        }
-
-        public MiniappUserResponse toResponse() {
-            return new MiniappUserResponse(id, openid, nickName, avatarUrl, role, createdAt, lastLoginAt);
+        public boolean isGuest() {
+            return id == null || id <= 0;
         }
     }
 }

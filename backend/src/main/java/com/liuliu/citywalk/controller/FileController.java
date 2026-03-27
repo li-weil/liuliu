@@ -2,8 +2,12 @@ package com.liuliu.citywalk.controller;
 
 import com.liuliu.citywalk.common.ApiResponse;
 import com.liuliu.citywalk.model.dto.response.FileUploadResponse;
+import com.liuliu.citywalk.repository.UploadedFileRepository;
+import com.liuliu.citywalk.service.MiniappSessionService;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -25,9 +29,18 @@ public class FileController {
 
     private static final Path UPLOAD_ROOT = Paths.get("uploads");
 
+    private final UploadedFileRepository uploadedFileRepository;
+    private final MiniappSessionService miniappSessionService;
+
+    public FileController(UploadedFileRepository uploadedFileRepository, MiniappSessionService miniappSessionService) {
+        this.uploadedFileRepository = uploadedFileRepository;
+        this.miniappSessionService = miniappSessionService;
+    }
+
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<FileUploadResponse> upload(@RequestPart("file") MultipartFile file,
-                                                  @RequestParam("bizType") String bizType) throws IOException {
+                                                  @RequestParam("bizType") String bizType,
+                                                  @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader) throws IOException {
         String safeBizType = normalizeSegment(bizType, "common");
         String originalName = file.getOriginalFilename() == null ? "file" : file.getOriginalFilename();
         String extension = extractExtension(originalName);
@@ -41,12 +54,21 @@ public class FileController {
             Files.copy(inputStream, targetPath, StandardCopyOption.REPLACE_EXISTING);
         }
 
+        String relativePath = "/uploads/" + safeBizType + "/" + fileName;
         String url = ServletUriComponentsBuilder.fromCurrentContextPath()
-                .path("/uploads/")
-                .path(safeBizType)
-                .path("/")
-                .path(fileName)
+                .path(relativePath)
                 .toUriString();
+
+        MiniappSessionService.StoredMiniappUser user = miniappSessionService.resolveUser(authorizationHeader);
+        uploadedFileRepository.save(
+                user == null || user.isGuest() ? null : user.id(),
+                safeBizType,
+                fileId,
+                originalName,
+                relativePath,
+                file.getContentType(),
+                file.getSize()
+        );
 
         FileUploadResponse response = new FileUploadResponse(
                 fileId,

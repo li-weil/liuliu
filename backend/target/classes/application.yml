@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: citywalk-backend
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/liuliu_citywalk?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
 
 amap:
   web-key: ${AMAP_WEB_KEY:a223365a46ab6b6a5a697598db9b392d}
