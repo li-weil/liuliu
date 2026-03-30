@@ -1,6 +1,7 @@
 package com.liuliu.citywalk.controller;
 
 import com.liuliu.citywalk.common.ApiResponse;
+import com.liuliu.citywalk.context.MiniappUserContext;
 import com.liuliu.citywalk.model.dto.request.MiniappCreateWalkRequest;
 import com.liuliu.citywalk.model.dto.response.MiniappCreateWalkResponse;
 import com.liuliu.citywalk.model.dto.response.MiniappWalkDetailResponse;
@@ -31,23 +32,20 @@ public class MiniappWalkController {
     }
 
     @PostMapping
-    public ApiResponse<MiniappCreateWalkResponse> create(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader,
-            @RequestBody MiniappCreateWalkRequest request
-    ) {
-        MiniappSessionService.StoredMiniappUser user = miniappSessionService.resolveUser(authorizationHeader);
-        MiniappWalkRecordResponse record = miniappWalkService.create(user.id(), request);
+    public ApiResponse<MiniappCreateWalkResponse> create(@RequestBody MiniappCreateWalkRequest request) {
+        Long userId = MiniappUserContext.getCurrentUserId();
+        if (userId == null || userId <= 0) {
+            return ApiResponse.fail(401, "login_required");
+        }
+        MiniappWalkRecordResponse record = miniappWalkService.create(userId, request);
         return ApiResponse.success(new MiniappCreateWalkResponse(true, record._id()));
     }
 
     @GetMapping("/me")
-    public ApiResponse<MiniappWalkListResponse> myWalks(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader,
-            @RequestParam(defaultValue = "20") Integer limit
-    ) {
-        MiniappSessionService.StoredMiniappUser user = miniappSessionService.resolveUser(authorizationHeader);
+    public ApiResponse<MiniappWalkListResponse> myWalks(@RequestParam(defaultValue = "20") Integer limit) {
+        Long userId = MiniappUserContext.getCurrentUserId();
         int finalLimit = Math.max(1, Math.min(limit, 50));
-        return ApiResponse.success(new MiniappWalkListResponse(miniappWalkService.listMyWalks(user.id(), finalLimit)));
+        return ApiResponse.success(new MiniappWalkListResponse(miniappWalkService.listMyWalks(userId, finalLimit)));
     }
 
     @GetMapping("/public")

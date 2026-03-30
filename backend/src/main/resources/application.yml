@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: citywalk-backend
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/liuliu_citywalk?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
 
 amap:
   web-key: ${AMAP_WEB_KEY:a223365a46ab6b6a5a697598db9b392d}
@@ -25,3 +30,9 @@ wechat:
     app-secret: ${WECHAT_OPEN_APP_SECRET:replace-with-your-app-secret}
     callback-url: ${WECHAT_OPEN_CALLBACK_URL:http://localhost:8080/api/v1/auth/wechat/callback}
     frontend-base-url: ${WECHAT_OPEN_FRONTEND_BASE_URL:http://localhost:3000}
+
+jwt:
+  secret: ${JWT_SECRET:liuliu-citywalk-miniapp-backend-secret-key-please-change}
+  issuer: ${JWT_ISSUER:liuliu-backend}
+  access-expire-seconds: ${JWT_ACCESS_EXPIRE_SECONDS:7200}
+  refresh-expire-seconds: ${JWT_REFRESH_EXPIRE_SECONDS:2592000}
