@@ -5,11 +5,9 @@ import com.liuliu.citywalk.model.dto.request.MiniappSyncUserRequest;
 import com.liuliu.citywalk.model.dto.response.MiniappSyncUserResponse;
 import com.liuliu.citywalk.model.dto.response.MiniappUserResponse;
 import com.liuliu.citywalk.service.MiniappSessionService;
-import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -29,9 +27,7 @@ public class MiniappAuthController {
     }
 
     @GetMapping("/me")
-    public ApiResponse<MiniappUserResponse> currentUser(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader
-    ) {
-        return ApiResponse.success(miniappSessionService.currentUser(authorizationHeader));
+    public ApiResponse<MiniappUserResponse> currentUser() {
+        return ApiResponse.success(miniappSessionService.currentUser());
     }
 }

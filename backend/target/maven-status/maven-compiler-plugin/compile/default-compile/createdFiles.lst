@@ -1,5 +1,6 @@
 com\liuliu\citywalk\model\dto\response\FileUploadResponse.class
 com\liuliu\citywalk\model\dto\response\MiniappSyncUserResponse.class
+com\liuliu\citywalk\context\MiniappUserContext.class
 com\liuliu\citywalk\repository\MiniappSessionRepository$MiniappSessionRecord.class
 com\liuliu\citywalk\model\dto\response\MiniappThemeSnapshotResponse.class
 com\liuliu\citywalk\model\dto\response\WechatCallbackResponse.class
@@ -11,6 +12,7 @@ com\liuliu\citywalk\model\dto\request\GenerateThemeRequest.class
 com\liuliu\citywalk\model\dto\response\MiniappMissionReviewResponse.class
 com\liuliu\citywalk\model\dto\request\MiniappCreateWalkRequest.class
 com\liuliu\citywalk\model\dto\response\WechatLoginUrlResponse.class
+com\liuliu\citywalk\interceptor\MiniappJwtInterceptor.class
 com\liuliu\citywalk\model\dto\request\CreateWalkRequest.class
 com\liuliu\citywalk\model\dto\response\MiniappRoutePointResponse.class
 com\liuliu\citywalk\service\MapSearchService.class
@@ -26,6 +28,7 @@ com\liuliu\citywalk\model\dto\response\MiniappLocationContextResponse.class
 com\liuliu\citywalk\repository\MiniappWalkRepository$3.class
 com\liuliu\citywalk\service\MiniappWalkService.class
 com\liuliu\citywalk\model\dto\request\PathPointRequest.class
+com\liuliu\citywalk\service\AuthTokenService$TokenClaims.class
 com\liuliu\citywalk\config\DeepSeekProperties.class
 com\liuliu\citywalk\service\GeminiThemeService$GeminiPart.class
 com\liuliu\citywalk\controller\MiniappAiController.class

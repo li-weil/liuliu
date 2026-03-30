@@ -1,5 +1,6 @@
 package com.liuliu.citywalk.service;
 
+import com.liuliu.citywalk.context.MiniappUserContext;
 import com.liuliu.citywalk.model.dto.response.MiniappSyncUserResponse;
 import com.liuliu.citywalk.model.dto.response.MiniappUserResponse;
 import com.liuliu.citywalk.repository.MiniappSessionRepository;
@@ -9,8 +10,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class MiniappSessionService {
-
-    private static final long DEFAULT_EXPIRES_IN = 7200L;
 
     private final AuthTokenService authTokenService;
     private final MiniappUserRepository miniappUserRepository;
@@ -36,23 +35,45 @@ public class MiniappSessionService {
 
         String token = authTokenService.createAccessToken(user.id());
         String refreshToken = authTokenService.createRefreshToken(user.id());
-        miniappSessionRepository.createSession(user.id(), token, refreshToken, DEFAULT_EXPIRES_IN, "miniapp");
+        miniappSessionRepository.createSession(user.id(), token, refreshToken, authTokenService.getAccessExpireSeconds(), "miniapp");
 
-        return new MiniappSyncUserResponse(token, refreshToken, DEFAULT_EXPIRES_IN, toResponse(user), user.openid());
+        return new MiniappSyncUserResponse(token, refreshToken, authTokenService.getAccessExpireSeconds(), toResponse(user), user.openid());
     }
 
     public MiniappUserResponse currentUser(String authorizationHeader) {
         return toResponse(resolveUser(authorizationHeader));
     }
 
+    public MiniappUserResponse currentUser() {
+        return toResponse(loadUserById(MiniappUserContext.getCurrentUserId()));
+    }
+
     public StoredMiniappUser resolveUser(String authorizationHeader) {
-        String token = extractToken(authorizationHeader);
-        if (token == null) {
+        return resolveUserByToken(extractToken(authorizationHeader));
+    }
+
+    public StoredMiniappUser resolveUserByToken(String token) {
+        if (token == null || token.isBlank()) {
             return guestUser;
         }
 
-        return miniappSessionRepository.findValidByAccessToken(token)
-                .flatMap(session -> miniappUserRepository.findById(session.userId()))
+        try {
+            AuthTokenService.TokenClaims claims = authTokenService.parseAccessToken(token);
+            return miniappSessionRepository.findValidByAccessToken(token)
+                    .filter(session -> claims.userId().equals(session.userId()))
+                    .flatMap(session -> miniappUserRepository.findById(session.userId()))
+                    .map(this::toStoredUser)
+                    .orElse(guestUser);
+        } catch (Exception error) {
+            return guestUser;
+        }
+    }
+
+    public StoredMiniappUser loadUserById(Long userId) {
+        if (userId == null || userId <= 0) {
+            return guestUser;
+        }
+        return miniappUserRepository.findById(userId)
                 .map(this::toStoredUser)
                 .orElse(guestUser);
     }

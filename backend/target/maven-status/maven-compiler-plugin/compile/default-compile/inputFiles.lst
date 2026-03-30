@@ -5,6 +5,7 @@ D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\config\DeepSeekProper
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\config\GeminiProperties.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\config\WebCorsConfig.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\config\WechatOpenProperties.java
+D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\context\MiniappUserContext.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\controller\AiThemeController.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\controller\AuthController.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\controller\FileController.java
@@ -14,6 +15,7 @@ D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\controller\MiniappAut
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\controller\MiniappWalkController.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\controller\ThemeController.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\controller\WalkController.java
+D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\interceptor\MiniappJwtInterceptor.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\request\CombineThemeRequest.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\request\CompletedMissionRequest.java
 D:\liuliu\liuliu\backend\src\main\java\com\liuliu\citywalk\model\dto\request\CreateThemeRequest.java

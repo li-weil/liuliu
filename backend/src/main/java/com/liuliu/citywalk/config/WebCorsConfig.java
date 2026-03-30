@@ -1,7 +1,9 @@
 package com.liuliu.citywalk.config;
 
+import com.liuliu.citywalk.interceptor.MiniappJwtInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -10,6 +12,12 @@ import java.nio.file.Paths;
 @Configuration
 public class WebCorsConfig implements WebMvcConfigurer {
 
+    private final MiniappJwtInterceptor miniappJwtInterceptor;
+
+    public WebCorsConfig(MiniappJwtInterceptor miniappJwtInterceptor) {
+        this.miniappJwtInterceptor = miniappJwtInterceptor;
+    }
+
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
@@ -17,6 +25,16 @@ public class WebCorsConfig implements WebMvcConfigurer {
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(false);
+    }
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(miniappJwtInterceptor)
+                .addPathPatterns(
+                        "/api/v1/miniapp/auth/me",
+                        "/api/v1/miniapp/walks",
+                        "/api/v1/miniapp/walks/me"
+                );
     }
 
     @Override

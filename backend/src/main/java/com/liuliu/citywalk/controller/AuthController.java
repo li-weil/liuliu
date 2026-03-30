@@ -5,6 +5,7 @@ import com.liuliu.citywalk.model.dto.request.LoginRequest;
 import com.liuliu.citywalk.model.dto.response.LoginResponse;
 import com.liuliu.citywalk.model.dto.response.UserProfileResponse;
 import com.liuliu.citywalk.model.dto.response.WechatLoginUrlResponse;
+import com.liuliu.citywalk.service.AuthTokenService;
 import com.liuliu.citywalk.service.WechatAuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
@@ -22,22 +23,36 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final WechatAuthService wechatAuthService;
+    private final AuthTokenService authTokenService;
 
-    public AuthController(WechatAuthService wechatAuthService) {
+    public AuthController(WechatAuthService wechatAuthService, AuthTokenService authTokenService) {
         this.wechatAuthService = wechatAuthService;
+        this.authTokenService = authTokenService;
     }
 
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        UserProfileResponse user = new UserProfileResponse(1001L, "六六", "https://cdn.example.com/avatar.jpg");
-        LoginResponse response = new LoginResponse("mock-jwt-token", "mock-refresh-token", 7200L, user);
+        Long userId = 1001L;
+        UserProfileResponse user = new UserProfileResponse(userId, "六六", "https://cdn.example.com/avatar.jpg");
+        LoginResponse response = new LoginResponse(
+                authTokenService.createAccessToken(userId),
+                authTokenService.createRefreshToken(userId),
+                authTokenService.getAccessExpireSeconds(),
+                user
+        );
         return ApiResponse.success(response);
     }
 
     @PostMapping("/mock-login")
     public ApiResponse<LoginResponse> mockLogin() {
-        UserProfileResponse user = new UserProfileResponse(1001L, "本地测试用户", "https://cdn.example.com/avatar.jpg");
-        LoginResponse response = new LoginResponse("mock-jwt-token", "mock-refresh-token", 7200L, user);
+        Long userId = 1001L;
+        UserProfileResponse user = new UserProfileResponse(userId, "本地测试用户", "https://cdn.example.com/avatar.jpg");
+        LoginResponse response = new LoginResponse(
+                authTokenService.createAccessToken(userId),
+                authTokenService.createRefreshToken(userId),
+                authTokenService.getAccessExpireSeconds(),
+                user
+        );
         return ApiResponse.success(response);
     }
 
