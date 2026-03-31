@@ -24,6 +24,12 @@ gemini:
   model: ${GEMINI_MODEL:gemini-2.5-flash}
   base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
 
+mission-verify-ai:
+  api-key: ${MISSION_VERIFY_AI_API_KEY:${AI_API_KEY:}}
+  model: ${MISSION_VERIFY_AI_MODEL:${AI_VISION_MODEL:qwen-vl-plus}}
+  base-url: ${MISSION_VERIFY_AI_BASE_URL:${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}}
+  request-timeout-ms: ${MISSION_VERIFY_AI_REQUEST_TIMEOUT_MS:${AI_REQUEST_TIMEOUT_MS:2200}}
+
 wechat:
   open:
     app-id: ${WECHAT_OPEN_APP_ID:replace-with-your-app-id}

@@ -14,7 +14,6 @@ import com.liuliu.citywalk.model.dto.response.PoiResponse;
 import com.liuliu.citywalk.model.dto.response.ThemeResponse;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -24,10 +23,16 @@ public class MiniappAiService {
 
     private final DeepSeekThemeService deepSeekThemeService;
     private final MapSearchService mapSearchService;
+    private final MissionVerifyAiService missionVerifyAiService;
 
-    public MiniappAiService(DeepSeekThemeService deepSeekThemeService, MapSearchService mapSearchService) {
+    public MiniappAiService(
+            DeepSeekThemeService deepSeekThemeService,
+            MapSearchService mapSearchService,
+            MissionVerifyAiService missionVerifyAiService
+    ) {
         this.deepSeekThemeService = deepSeekThemeService;
         this.mapSearchService = mapSearchService;
+        this.missionVerifyAiService = missionVerifyAiService;
     }
 
     public MiniappThemeResultResponse generateTheme(GenerateThemeRequest request) {
@@ -76,28 +81,7 @@ public class MiniappAiService {
     }
 
     public MiniappMissionVerifyResponse verifyMission(MiniappMissionVerifyRequest request) {
-        List<String> files = new ArrayList<>();
-        if (request.fileIDs() != null) {
-            files.addAll(request.fileIDs().stream().filter(item -> item != null && !item.isBlank()).toList());
-        }
-        if (request.fileUrls() != null) {
-            files.addAll(request.fileUrls().stream().filter(item -> item != null && !item.isBlank()).toList());
-        }
-
-        if (request.mission() == null || request.mission().isBlank() || files.isEmpty()) {
-            return new MiniappMissionVerifyResponse(
-                    false,
-                    "请至少上传一张图片，再让后端帮你判断是否完成了任务。",
-                    "low",
-                    System.currentTimeMillis(),
-                    "missing_input"
-            );
-        }
-
-        String comment = (request.noteText() != null && !request.noteText().isBlank())
-                ? "图文信息已经比较贴近任务意图，先为你记作完成。"
-                : "已收到图片，和任务方向基本一致，先为你记作完成。";
-        return new MiniappMissionVerifyResponse(true, comment, files.size() > 1 ? "medium" : "low", System.currentTimeMillis(), null);
+        return missionVerifyAiService.verifyMission(request);
     }
 
     private String resolvePlaceName(Double latitude, Double longitude) {

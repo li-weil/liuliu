@@ -26,6 +26,7 @@ com\liuliu\citywalk\controller\AiThemeController.class
 com\liuliu\citywalk\model\dto\response\MiniappThemeResultResponse.class
 com\liuliu\citywalk\model\dto\response\MiniappLocationContextResponse.class
 com\liuliu\citywalk\repository\MiniappWalkRepository$3.class
+com\liuliu\citywalk\model\dto\request\WebSyncUserRequest.class
 com\liuliu\citywalk\service\MiniappWalkService.class
 com\liuliu\citywalk\model\dto\request\PathPointRequest.class
 com\liuliu\citywalk\service\AuthTokenService$TokenClaims.class
@@ -39,6 +40,7 @@ com\liuliu\citywalk\model\dto\request\CombineThemeRequest.class
 com\liuliu\citywalk\controller\WalkController.class
 com\liuliu\citywalk\model\dto\response\MiniappWalkRecordResponse.class
 com\liuliu\citywalk\model\dto\request\MiniappRoutePointRequest.class
+com\liuliu\citywalk\model\dto\request\WebSyncUserRequest$Profile.class
 com\liuliu\citywalk\repository\MiniappWalkRepository.class
 com\liuliu\citywalk\repository\UploadedFileRepository.class
 com\liuliu\citywalk\CityWalkBackendApplication.class
@@ -51,6 +53,8 @@ com\liuliu\citywalk\model\dto\response\MiniappUserResponse.class
 com\liuliu\citywalk\controller\AuthController.class
 com\liuliu\citywalk\controller\MapController.class
 com\liuliu\citywalk\model\dto\response\MiniappMissionVerifyResponse.class
+com\liuliu\citywalk\config\MissionVerifyAiProperties.class
+com\liuliu\citywalk\service\MissionVerifyAiService.class
 com\liuliu\citywalk\service\GeminiThemeService$GeminiRequest.class
 com\liuliu\citywalk\model\dto\request\CompletedMissionRequest.class
 com\liuliu\citywalk\model\dto\request\CreateThemeRequest.class
@@ -64,6 +68,7 @@ com\liuliu\citywalk\common\ApiResponse.class
 com\liuliu\citywalk\model\dto\response\UserProfileResponse.class
 com\liuliu\citywalk\controller\MiniappAuthController.class
 com\liuliu\citywalk\service\MiniappSessionService.class
+com\liuliu\citywalk\service\MissionVerifyAiService$VerifyPayload.class
 com\liuliu\citywalk\service\DeepSeekThemeService.class
 com\liuliu\citywalk\repository\MiniappSessionRepository.class
 com\liuliu\citywalk\config\GeminiProperties.class

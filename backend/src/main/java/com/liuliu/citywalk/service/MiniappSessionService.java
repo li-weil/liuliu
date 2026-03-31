@@ -28,6 +28,16 @@ public class MiniappSessionService {
 
     @Transactional
     public MiniappSyncUserResponse syncUser(String code, String nickName, String avatarUrl) {
+        return syncUser(code, nickName, avatarUrl, "miniapp");
+    }
+
+    @Transactional
+    public MiniappSyncUserResponse syncWebUser(String code, String nickName, String avatarUrl) {
+        return syncUser(code, nickName, avatarUrl, "web");
+    }
+
+    @Transactional
+    public MiniappSyncUserResponse syncUser(String code, String nickName, String avatarUrl, String clientType) {
         String openId = buildOpenId(code, nickName);
         MiniappUserRepository.MiniappUserRecord user = miniappUserRepository.findByOpenid(openId)
                 .map(item -> miniappUserRepository.updateProfileAndLogin(item.id(), normalizeNickName(nickName), normalizeAvatar(avatarUrl)))
@@ -35,7 +45,13 @@ public class MiniappSessionService {
 
         String token = authTokenService.createAccessToken(user.id());
         String refreshToken = authTokenService.createRefreshToken(user.id());
-        miniappSessionRepository.createSession(user.id(), token, refreshToken, authTokenService.getAccessExpireSeconds(), "miniapp");
+        miniappSessionRepository.createSession(
+                user.id(),
+                token,
+                refreshToken,
+                authTokenService.getAccessExpireSeconds(),
+                normalizeClientType(clientType)
+        );
 
         return new MiniappSyncUserResponse(token, refreshToken, authTokenService.getAccessExpireSeconds(), toResponse(user), user.openid());
     }
@@ -103,6 +119,13 @@ public class MiniappSessionService {
 
     private String normalizeAvatar(String avatarUrl) {
         return avatarUrl == null ? "" : avatarUrl.trim();
+    }
+
+    private String normalizeClientType(String clientType) {
+        if (clientType == null || clientType.isBlank()) {
+            return "miniapp";
+        }
+        return clientType.trim();
     }
 
     private StoredMiniappUser toStoredUser(MiniappUserRepository.MiniappUserRecord user) {
