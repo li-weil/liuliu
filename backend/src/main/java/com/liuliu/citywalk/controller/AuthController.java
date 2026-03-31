@@ -2,10 +2,13 @@ package com.liuliu.citywalk.controller;
 
 import com.liuliu.citywalk.common.ApiResponse;
 import com.liuliu.citywalk.model.dto.request.LoginRequest;
+import com.liuliu.citywalk.model.dto.request.WebSyncUserRequest;
 import com.liuliu.citywalk.model.dto.response.LoginResponse;
+import com.liuliu.citywalk.model.dto.response.MiniappSyncUserResponse;
 import com.liuliu.citywalk.model.dto.response.UserProfileResponse;
 import com.liuliu.citywalk.model.dto.response.WechatLoginUrlResponse;
 import com.liuliu.citywalk.service.AuthTokenService;
+import com.liuliu.citywalk.service.MiniappSessionService;
 import com.liuliu.citywalk.service.WechatAuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
@@ -24,10 +27,16 @@ public class AuthController {
 
     private final WechatAuthService wechatAuthService;
     private final AuthTokenService authTokenService;
+    private final MiniappSessionService miniappSessionService;
 
-    public AuthController(WechatAuthService wechatAuthService, AuthTokenService authTokenService) {
+    public AuthController(
+            WechatAuthService wechatAuthService,
+            AuthTokenService authTokenService,
+            MiniappSessionService miniappSessionService
+    ) {
         this.wechatAuthService = wechatAuthService;
         this.authTokenService = authTokenService;
+        this.miniappSessionService = miniappSessionService;
     }
 
     @PostMapping("/login")
@@ -56,6 +65,20 @@ public class AuthController {
         return ApiResponse.success(response);
     }
 
+    @PostMapping("/sync-user")
+    public ApiResponse<MiniappSyncUserResponse> syncUser(@RequestBody(required = false) WebSyncUserRequest request) {
+        WebSyncUserRequest finalRequest = request == null
+                ? new WebSyncUserRequest(null, null, null, null)
+                : request;
+        return ApiResponse.success(
+                miniappSessionService.syncWebUser(
+                        finalRequest.resolvedCode(),
+                        finalRequest.resolvedNickName(),
+                        finalRequest.resolvedAvatarUrl()
+                )
+        );
+    }
+
     @GetMapping("/wechat/url")
     public ApiResponse<WechatLoginUrlResponse> wechatLoginUrl(@RequestParam(required = false) String redirectUri) {
         return ApiResponse.success(wechatAuthService.buildLoginUrl(redirectUri));
@@ -73,6 +96,14 @@ public class AuthController {
     public ApiResponse<UserProfileResponse> currentUser(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader
     ) {
+        MiniappSessionService.StoredMiniappUser currentUser = miniappSessionService.resolveUser(authorizationHeader);
+        if (currentUser != null && !currentUser.isGuest()) {
+            return ApiResponse.success(new UserProfileResponse(
+                    currentUser.id(),
+                    currentUser.nickName(),
+                    currentUser.avatarUrl()
+            ));
+        }
         return ApiResponse.success(wechatAuthService.loadCurrentUser(authorizationHeader));
     }
 
